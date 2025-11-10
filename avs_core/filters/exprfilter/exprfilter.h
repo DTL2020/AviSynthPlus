@@ -214,6 +214,9 @@ public:
     AVS_UNUSED(frame_range);
     return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
   }
+  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
 };
 

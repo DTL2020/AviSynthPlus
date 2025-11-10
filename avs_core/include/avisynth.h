@@ -54,6 +54,7 @@
 //           - New propSetDataH, like propSetData but with optional data type hint (byte/string)
 //             (VSAPI4: mapSetData, our propSetData became VSAPI4: mapSetData3)
 // 20250415  V11.1 Fix AVS_Value 64 bit data member declaration for 64-bit non Intel (other than X86_X64) systems.
+// 2025      V12 
 
 // http://avisynth.nl
 
@@ -124,8 +125,8 @@ enum AvsVersion {
   AVISYNTH_CLASSIC_INTERFACE_VERSION_25 = 3,
   AVISYNTH_CLASSIC_INTERFACE_VERSION_26BETA = 5,
   AVISYNTH_CLASSIC_INTERFACE_VERSION = 6,
-  AVISYNTH_INTERFACE_VERSION = 11,
-  AVISYNTHPLUS_INTERFACE_BUGFIX_VERSION = 1 // reset to zero whenever the normal interface version bumps
+  AVISYNTH_INTERFACE_VERSION = 12,
+  AVISYNTHPLUS_INTERFACE_BUGFIX_VERSION = 0 // reset to zero whenever the normal interface version bumps
 };
 
 /* Compiler-specific crap */
@@ -176,6 +177,20 @@ enum AvsSampleType {
   SAMPLE_INT24 = 1 << 2,  // Int24 is a very stupid thing to code, but it's supported by some hardware.
   SAMPLE_INT32 = 1 << 3,
   SAMPLE_FLOAT = 1 << 4
+};
+
+struct ROWS_REGION
+{
+    int start_row;
+    int end_row;
+};
+
+enum OUTPUT_MODE {
+    DEFAULT_MODE = 0,
+    OUTPUT_MODE_FRAME = 1 << 0,
+    OUTPUT_MODE_PLANE = 1 << 1,
+    OUTPUT_MODE_PART_PLANE = 1 << 2,
+    OUTPUT_MODE_PART_FRAME = 1 << 3,
 };
 
 enum AvsPlane {
@@ -1266,6 +1281,11 @@ public:
   /* Need to check GetVersion first, pre v5 will return random crap from EAX reg. */
   virtual int __stdcall SetCacheHints(int cachehints,int frame_range) = 0 ;  // We do not pass cache requests upwards, only to the next filter.
   virtual const VideoInfo& __stdcall GetVideoInfo() = 0;
+  virtual int __stdcall GetSupportedOutputModes() = 0;
+  virtual void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) = 0;
+  virtual PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) = 0;
+  virtual PVideoFrame __stdcall GetPartialFrame(int n, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+
   virtual ~IClip() {}
 }; // end class IClip
 
@@ -1472,6 +1492,10 @@ public:
   const VideoInfo& __stdcall GetVideoInfo() { return vi; }
   bool __stdcall GetParity(int n) { return child->GetParity(n); }
   int __stdcall SetCacheHints(int cachehints, int frame_range) { AVS_UNUSED(cachehints); AVS_UNUSED(frame_range); return 0; }  // We do not pass cache requests upwards, only to the next filter.
+  // V12
+  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 };
 
 

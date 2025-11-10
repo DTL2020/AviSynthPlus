@@ -1883,7 +1883,7 @@ public:
   {
     return core->MakeWritable(pvf);
   }
-
+    
   void __stdcall BitBlt(BYTE* dstp, int dst_pitch, const BYTE* srcp, int src_pitch, int row_size, int height)
   {
     core->BitBlt(dstp, dst_pitch, srcp, src_pitch, row_size, height);
@@ -4019,7 +4019,6 @@ bool ScriptEnvironment::MakeWritable(PVideoFrame* pvf) {
   *pvf = dst;
   return true;
 }
-
 
 void ScriptEnvironment::AtExit(IScriptEnvironment::ShutdownFunc function, void* user_data) {
   at_exit.Add(function, user_data);

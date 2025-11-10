@@ -25,6 +25,10 @@ public:
   virtual int __stdcall SetCacheHints(int cachehints, int frame_range);
   virtual const VideoInfo& __stdcall GetVideoInfo();
 
+  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+
   void Destroy();
 
   static AVSValue Create(AVSValue args, void*, IScriptEnvironment* env);

@@ -160,7 +160,7 @@ Cache::~Cache()
 PVideoFrame __stdcall Cache::GetFrame(int n, IScriptEnvironment* env_)
 {
 #ifdef _DEBUG
-  constexpr auto BUFSIZE = 255;
+  constexpr auto BUFSIZE = 511; // to fit all long lines
   std::unique_ptr<char[]> buf(new char[BUFSIZE+1]);
 
 #endif
@@ -292,6 +292,145 @@ PVideoFrame __stdcall Cache::GetFrame(int n, IScriptEnvironment* env_)
 
   return result;
 }
+
+
+PVideoFrame __stdcall Cache::GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env_)//GetFrame(int n, IScriptEnvironment* env_)
+{
+#ifdef _DEBUG
+    constexpr auto BUFSIZE = 511; // to fit all long lines
+    std::unique_ptr<char[]> buf(new char[BUFSIZE + 1]);
+
+#endif
+    InternalEnvironment* env = GetAndRevealCamouflagedEnv(env_);
+
+    // Protect plugins that cannot handle out-of-bounds frame indices
+    n = clamp(n, 0, GetVideoInfo().num_frames - 1);
+
+    if (_pimpl->VideoCache->requested_capacity() > _pimpl->VideoCache->capacity())
+        env->ManageCache(MC_NodAndExpandCache, reinterpret_cast<void*>(this));
+    else
+        env->ManageCache(MC_NodCache, reinterpret_cast<void*>(this));
+
+    PVideoFrame result;
+    LruCache<size_t, PVideoFrame>::handle cache_handle;
+
+    CacheStack cache_stack(env);
+
+#ifdef _DEBUG
+    std::chrono::time_point<std::chrono::high_resolution_clock> t_start, t_end;
+    t_start = std::chrono::high_resolution_clock::now(); // t_start starts in the constructor. Used in logging
+
+    LruLookupResult LruLookupRes = _pimpl->VideoCache->lookup(n, &cache_handle, true, result, &env->GetSupressCaching());
+    /*
+    std::string name = FuncName;
+    snprintf(buf.get(), BUFSIZE, "Cache::GetFrame lookup follows: [%s] n=%6d Thread=%zu", name.c_str(), n, env->GetEnvProperty(AEP_THREAD_ID));
+    _RPT0(0, buf.get());
+
+    snprintf(buf.get(), BUFSIZE, "Cache::GetFrame lookup ready: [%s] n=%6d Thread=%zu res=%d", name.c_str(), n, env->GetEnvProperty(AEP_THREAD_ID), (int)LruLookupRes);
+    _RPT0(0, buf.get());
+    */
+
+#ifdef _DEBUG
+    std::string name = FuncName;
+#endif
+
+    switch (LruLookupRes)
+#else
+    // fill result in lookup before releasing cache handle lock
+    switch (_pimpl->VideoCache->lookup(n, &cache_handle, true, result, &env->GetSupressCaching()))
+#endif
+    {
+    case LRU_LOOKUP_NOT_FOUND:
+    {
+        try
+        {
+#ifdef _DEBUG
+            snprintf(buf.get(), BUFSIZE, "Cache::GetPlaneOfFrame LRU_LOOKUP_NOT_FOUND: [%s] n=%6d child=%p\n", name.c_str(), n, (void*)_pimpl->child); // P.F.
+            _RPT0(0, buf.get());
+#endif
+            //cache_handle.first->value = _pimpl->child->GetFrame(n, env);
+            result = _pimpl->child->GetPlaneOfFrame(n, p, rr, env);//GetFrame(n, env); // P.F. fill result immediately
+
+            // check device
+            if (result->GetFrameBuffer()->device != device) {
+                const char* error_msg = env->Sprintf("Frame device mismatch: Assumed: %s Actual: %s",
+                    device->GetName(), result->GetFrameBuffer()->device->GetName());
+                result = env->NewVideoFrame(_pimpl->vi);
+                env->ApplyMessage(&result, _pimpl->vi, error_msg, _pimpl->vi.width / 5, 0xa0a0a0, 0, 0);
+            }
+
+            cache_handle.first->value = result; // not after commit!
+#ifdef X86_32
+            _mm_empty();
+#endif
+            _pimpl->VideoCache->commit_value(&cache_handle);
+        }
+        catch (...)
+        {
+            _pimpl->VideoCache->rollback(&cache_handle);
+            throw;
+        }
+#ifdef _DEBUG
+        t_end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed_seconds = t_end - t_start;
+        std::string name = FuncName;
+        if (NULL == cache_handle.first->value) {
+            snprintf(buf.get(), BUFSIZE, "Cache::GetPlaneOfFrame LRU_LOOKUP_NOT_FOUND: HEY! got nulled! [%s] n=%6d child=%p frame=%p framebefore=%p SeekTimeWithGetFrame:%f\n", name.c_str(), n, (void*)_pimpl->child, (void*)cache_handle.first->value, (void*)result, elapsed_seconds.count()); // P.F.
+            _RPT0(0, buf.get());
+        }
+        else {
+            snprintf(buf.get(), BUFSIZE, "Cache::GetPlaneOfFrame LRU_LOOKUP_NOT_FOUND: [%s] n=%6d child=%p frame=%p framebefore=%p videoCacheSize=%zu SeekTimeWithGetFrame:%f\n", name.c_str(), n, (void*)_pimpl->child, (void*)cache_handle.first->value, (void*)result, _pimpl->VideoCache->size(), elapsed_seconds.count()); // P.F.
+            _RPT0(0, buf.get());
+        }
+#endif
+        // result = cache_handle.first->value; not here!
+        // its content may change after commit when the last lock is released
+        // (cache is being restructured by other threads, new frames, etc...)
+        break;
+    }
+    case LRU_LOOKUP_FOUND_AND_READY:
+    {
+        // theoretically cache_handle here may point to wrong entry,
+        // because the lock in lookup is released before this readout
+        // solution:
+        // when LRU_LOOKUP_FOUND_AND_READY, the cache_handle.first->value is copied and returned in result itself
+        // result =  cache_handle.first->value; // old method not needed, result is filled already by lookup
+#ifdef _DEBUG
+        t_end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed_seconds = t_end - t_start;
+        std::string name = FuncName;
+        snprintf(buf.get(), BUFSIZE, "Cache::GetPlaneOfFrame LRU_LOOKUP_FOUND_AND_READY: [%s] n=%6d child=%p frame=%p vfb=%p videoCacheSize=%zu SeekTime            :%f\n", name.c_str(), n, (void*)_pimpl->child, (void*)result, (void*)result->GetFrameBuffer(), _pimpl->VideoCache->size(), elapsed_seconds.count());
+        _RPT0(0, buf.get());
+        assert(result != NULL);
+#endif
+        break;
+    }
+    case LRU_LOOKUP_NO_CACHE:
+    {
+#ifdef _DEBUG
+        snprintf(buf.get(), BUFSIZE, "Cache::GetPlaneOfFrame <Before GetPlaneOfFrame> LRU_LOOKUP_NO_CACHE: [%s] n=%6d child=%p\n", name.c_str(), n, (void*)_pimpl->child); // P.F.
+        _RPT0(0, buf.get());
+#endif
+        result = _pimpl->child->GetPlaneOfFrame(n, p, rr, env);//GetFrame(n, env);
+#ifdef _DEBUG
+        t_end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed_seconds = t_end - t_start;
+        snprintf(buf.get(), BUFSIZE, "Cache::GetPlaneOfFrame <After GetPlaneOfFrame> LRU_LOOKUP_NO_CACHE: [%s] n=%6d child=%p frame=%p vfb=%p videoCacheSize=%zu SeekTime            :%f\n", name.c_str(), n, (void*)_pimpl->child, (void*)result, (void*)result->GetFrameBuffer(), _pimpl->VideoCache->size(), elapsed_seconds.count()); // P.F.
+        _RPT0(0, buf.get());
+#endif
+        break;
+    }
+    case LRU_LOOKUP_FOUND_BUT_NOTAVAIL:    // Fall-through intentional
+    default:
+    {
+        assert(0);
+        break;
+    }
+    }
+
+    return result;
+}
+
 
 void Cache::FillAudioZeros(void* buf, size_t start_offset, size_t count) {
     const int bps = _pimpl->vi.BytesPerAudioSample();
@@ -681,6 +820,25 @@ PVideoFrame __stdcall CacheGuard::GetFrame(int n, IScriptEnvironment* env_)
   return GetCache(env)->GetFrame(n, env);
 }
 
+PVideoFrame __stdcall CacheGuard::GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env_)
+{
+    // not cached for now ?
+//    return child->GetPlaneOfFrame(n, p, rr, env);
+    InternalEnvironment* IEnv = GetAndRevealCamouflagedEnv(env_);
+    IScriptEnvironment* env = static_cast<IScriptEnvironment*>(IEnv);
+
+    ScopedCounter getframe_counter(IEnv->GetFrameRecursiveCount());
+
+    return GetCache(env)->GetPlaneOfFrame(n, p, rr, env);
+
+}
+
+void* __stdcall CacheGuard::ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env)
+{
+    return child->ProcessPlaneOfFrame(n, p, rr, env);
+}
+
+
 void __stdcall CacheGuard::GetAudio(void* buf, int64_t start, int64_t count, IScriptEnvironment* env_)
 {
   InternalEnvironment* IEnv = GetAndRevealCamouflagedEnv(env_);
@@ -695,10 +853,16 @@ const VideoInfo& __stdcall CacheGuard::GetVideoInfo()
     return vi;
 }
 
+int __stdcall CacheGuard::GetSupportedOutputModes()
+{
+    return child->GetSupportedOutputModes();
+}
+
 bool __stdcall CacheGuard::GetParity(int n)
 {
     return child->GetParity(n);
 }
+
 
 int __stdcall CacheGuard::SetCacheHints(int cachehints, int frame_range)
 {

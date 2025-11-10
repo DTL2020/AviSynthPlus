@@ -95,6 +95,10 @@ public:
       return 0;
     }
   }
+
+  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 };
 
 // For any frame number, this clip returns the first frame of a child clip .
@@ -1816,6 +1820,10 @@ public:
       }
   };
 
+  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+
   void FillAudioZeros(void* buf, int start_offset, int count) {
     const int bps = vi.BytesPerAudioSample();
     unsigned char* byte_buf = (unsigned char*)buf;
@@ -2109,6 +2117,10 @@ public:
     AVS_UNUSED(cachehints);
     AVS_UNUSED(frame_range);
     return 0; };
+
+  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
 };
 
