@@ -711,37 +711,146 @@ static void invert_plane(BYTE* frame, int pitch, int rowsize, int height, int pi
 PVideoFrame Invert::GetFrame(int n, IScriptEnvironment* env)
 {
     PVideoFrame f;
-    
-    if ((child->GetSupportedOutputModes() && OUTPUT_MODE_PLANE) && vi.IsPlanar())
-    {
-        ROWS_REGION rr = { 0,0 }; // todo: cycle through regions by information from the core
 
+    ROWS_REGION rr = { 0, 0 };
+    int iNumStripes = 10; // temp here until SetStripeSize() implemented
+
+    if ((child->GetSupportedOutputModes() & OUTPUT_MODE_PLANE) && vi.IsPlanar())
+    {
         if (vi.IsYUV() || vi.IsYUVA()) {
             // Y plane
             if (doY)
             {
-                f = child->GetPlaneOfFrame(n, PLANAR_Y, rr, env); 
-                env->MakeWritable(&f);
-                invert_plane(f->GetWritePtr(),f->GetPitch(), f->GetRowSize(PLANAR_Y_ALIGNED),f->GetHeight(), pixelsize, mask64, false, env);
+                if ((child->GetSupportedOutputModes() & OUTPUT_MODE_PART_PLANE) == 0)
+                {
+                    rr.start_row = 0;
+                    rr.end_row = vi.height;
+                    f = child->GetPlaneOfFrame(n, PLANAR_Y, rr, env);
+
+                    env->MakeWritable(&f);
+                    invert_plane(f->GetWritePtr(), f->GetPitch(), f->GetRowSize(PLANAR_Y_ALIGNED), f->GetHeight(), pixelsize, mask64, false, env);
+                }
+                else
+                {
+                    int iHeightModNumStripes = (vi.height / iNumStripes) * iNumStripes;
+                    int iStripeSize = vi.height / iNumStripes;
+
+                    rr.start_row = 0;
+                    rr.end_row = iStripeSize;
+                    f = child->GetPlaneOfFrame(n, PLANAR_Y, rr, env);
+
+                    env->MakeWritable(&f);
+
+                    pfY = f->GetWritePtr();
+                    pitchY = f->GetPitch();
+                    rowsizeY = f->GetRowSize(PLANAR_Y_ALIGNED);
+                    heightY = f->GetHeight();
+
+//                  invert_plane(f->GetWritePtr(), f->GetPitch(), f->GetRowSize(PLANAR_Y_ALIGNED), f->GetHeight(), pixelsize, mask64, false, env);
+                    invert_plane(pfY, pitchY, rowsizeY, iStripeSize, pixelsize, mask64, false, env);
+
+                    for (int iStartRow = iStripeSize; iStartRow < iHeightModNumStripes; iStartRow+=iStripeSize)
+                    {
+                        rr.start_row = iStartRow;
+                        rr.end_row = iStartRow + iStripeSize;
+                        child->ProcessPlaneOfFrame(n, PLANAR_Y, rr, env);
+
+                        pfY += pitchY * iStripeSize;
+                        invert_plane(pfY, pitchY, rowsizeY, iStripeSize, pixelsize, mask64, false, env);
+                    }
+
+                    // todo: last rows if present
+                }
             }
 
-            // U plane
+            // U plane  , TODO: make functions for Y,U,V processing by one function with plane name argument to make program text shorter
             if (doU)
             {
+                if ((child->GetSupportedOutputModes() & OUTPUT_MODE_PART_PLANE) == 0)
+                {
+                    rr.start_row = 0;
+                    rr.end_row = vi.height >> vi.GetPlaneHeightSubsampling(PLANAR_U);
 //                f = child->GetPlaneOfFrame(n, PLANAR_U, rr, env);
-                child->ProcessPlaneOfFrame(n, PLANAR_U, rr, env);
-//                env->MakeWritable(&f); 
-                invert_plane(f->GetWritePtr(PLANAR_U), f->GetPitch(PLANAR_U), f->GetRowSize(PLANAR_U_ALIGNED), f->GetHeight(PLANAR_U), pixelsize, mask64, true, env);
+                    child->ProcessPlaneOfFrame(n, PLANAR_U, rr, env);
 
+//                env->MakeWritable(&f); 
+                    invert_plane(f->GetWritePtr(PLANAR_U), f->GetPitch(PLANAR_U), f->GetRowSize(PLANAR_U_ALIGNED), f->GetHeight(PLANAR_U), pixelsize, mask64, true, env);
+                }
+                else
+                {
+                    pfU = f->GetWritePtr(PLANAR_U);
+                    pitchU = f->GetPitch(PLANAR_U);
+                    rowsizeU = f->GetRowSize(PLANAR_U_ALIGNED);
+                    heightU = f->GetHeight(PLANAR_U);
+
+                    int iHeightModNumStripes = (heightU / iNumStripes) * iNumStripes;
+                    int iStripeSize = heightU / iNumStripes;
+
+                    rr.start_row = 0;
+                    rr.end_row = iStripeSize;
+                    child->ProcessPlaneOfFrame(n, PLANAR_U, rr, env);
+
+//                  invert_plane(f->GetWritePtr(), f->GetPitch(), f->GetRowSize(PLANAR_Y_ALIGNED), f->GetHeight(), pixelsize, mask64, false, env);
+                    invert_plane(pfU, pitchU, rowsizeU, iStripeSize, pixelsize, mask64, true, env);
+
+                    for (int iStartRow = iStripeSize; iStartRow < iHeightModNumStripes; iStartRow += iStripeSize)
+                    {
+                        rr.start_row = iStartRow;
+                        rr.end_row = iStartRow + iStripeSize;
+                        child->ProcessPlaneOfFrame(n, PLANAR_U, rr, env);
+
+                        pfU += pitchU * iStripeSize;
+                        invert_plane(pfU, pitchU, rowsizeU, iStripeSize, pixelsize, mask64, false, env);
+                    }
+
+                    // todo: last rows if present
+                }
             }
 
             // V plane
             if (doV)
             {
-//                f = child->GetPlaneOfFrame(n, PLANAR_V, rr, env);
-                child->ProcessPlaneOfFrame(n, PLANAR_V, rr, env);
-//                env->MakeWritable(&f);
-                invert_plane(f->GetWritePtr(PLANAR_V), f->GetPitch(PLANAR_V), f->GetRowSize(PLANAR_V_ALIGNED), f->GetHeight(PLANAR_V), pixelsize, mask64, true, env);
+                if ((child->GetSupportedOutputModes() & OUTPUT_MODE_PART_PLANE) == 0)
+                {
+                    rr.start_row = 0;
+                    rr.end_row = vi.height >> vi.GetPlaneHeightSubsampling(PLANAR_V);
+                    //                f = child->GetPlaneOfFrame(n, PLANAR_V, rr, env);
+                    child->ProcessPlaneOfFrame(n, PLANAR_V, rr, env);
+
+                    //                env->MakeWritable(&f);
+                    invert_plane(f->GetWritePtr(PLANAR_V), f->GetPitch(PLANAR_V), f->GetRowSize(PLANAR_V_ALIGNED), f->GetHeight(PLANAR_V), pixelsize, mask64, true, env);
+                }
+                else
+                {
+                    pfV = f->GetWritePtr(PLANAR_V);
+                    pitchV = f->GetPitch(PLANAR_V);
+                    rowsizeV = f->GetRowSize(PLANAR_V_ALIGNED);
+                    heightV = f->GetHeight(PLANAR_V);
+
+                    int iHeightModNumStripes = (heightV / iNumStripes) * iNumStripes;
+                    int iStripeSize = heightV / iNumStripes;
+
+                    rr.start_row = 0;
+                    rr.end_row = iStripeSize;
+                    child->ProcessPlaneOfFrame(n, PLANAR_V, rr, env);
+
+                    //                  invert_plane(f->GetWritePtr(), f->GetPitch(), f->GetRowSize(PLANAR_Y_ALIGNED), f->GetHeight(), pixelsize, mask64, false, env);
+                    invert_plane(pfV, pitchV, rowsizeV, iStripeSize, pixelsize, mask64, true, env);
+
+                    for (int iStartRow = iStripeSize; iStartRow < iHeightModNumStripes; iStartRow += iStripeSize)
+                    {
+                        rr.start_row = iStartRow;
+                        rr.end_row = iStartRow + iStripeSize;
+                        child->ProcessPlaneOfFrame(n, PLANAR_V, rr, env);
+
+                        pfV += pitchV * iStripeSize;
+                        invert_plane(pfV, pitchV, rowsizeV, iStripeSize, pixelsize, mask64, false, env);
+                    }
+
+                    // todo: last rows if present
+                }
+
+
             }
 
         }
@@ -888,25 +997,35 @@ PVideoFrame Invert::GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEn
 
     // Regions of plane not yet implemented - always process full plane height
 
-    env->MakeWritable(&f);
+//    env->MakeWritable(&f);
 
     BYTE* pf = f->GetWritePtr();
     int pitch = f->GetPitch();
     int rowsize = f->GetRowSize();
     int height = f->GetHeight();
-    
+
+    int iNumRowsToProcess = rr.end_row - rr.start_row; // todo: check if end is below height 
 
     // planar YUV
     if (vi.IsYUV() || vi.IsYUVA()) {
         if (doY && (p == PLANAR_Y))
-            invert_plane(pf, pitch, f->GetRowSize(PLANAR_Y_ALIGNED), height, pixelsize, mask64, false, env);
+        {
+            BYTE* pStart = pf + pitch * rr.start_row;
+
+            //invert_plane(pf, pitch, f->GetRowSize(PLANAR_Y_ALIGNED), height, pixelsize, mask64, false, env);
+            invert_plane(pStart, pitch, f->GetRowSize(PLANAR_Y_ALIGNED), iNumRowsToProcess, pixelsize, mask64, false, env);
+        }
 //              invert_plane(pfY, pitchY, rowsizeY, heightY, pixelsize, mask64, false, env);
         if (doU && (p == PLANAR_U))
+        {
 //              invert_plane(f->GetWritePtr(PLANAR_U), f->GetPitch(PLANAR_U), f->GetRowSize(PLANAR_U_ALIGNED), f->GetHeight(PLANAR_U), pixelsize, mask64, true, env);
-            invert_plane(pfU, pitchU, rowsizeU, heightU, pixelsize, mask64, true, env);
+            invert_plane(pfU, pitchU, rowsizeU, heightU, pixelsize, mask64, true, env);        
+        }
         if (doV && (p == PLANAR_V))
+        {
 //              invert_plane(f->GetWritePtr(PLANAR_V), f->GetPitch(PLANAR_V), f->GetRowSize(PLANAR_V_ALIGNED), f->GetHeight(PLANAR_V), pixelsize, mask64, true, env);
             invert_plane(pfV, pitchV, rowsizeV, heightV, pixelsize, mask64, true, env);
+        }
     }
     // planar RGB
 /*    if (vi.IsPlanarRGB() || vi.IsPlanarRGBA()) {
@@ -937,24 +1056,33 @@ void* Invert::ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvi
         child->ProcessPlaneOfFrame(n, p, rr, env);
     }
 
+    int iNumRowsToProcess = rr.end_row - rr.start_row; // todo: check if end is below height 
+
     // planar YUV
-    if (vi.IsYUV() || vi.IsYUVA()) {
+    if (vi.IsYUV() || vi.IsYUVA()) 
+    {
         if (doY && (p == PLANAR_Y))
         {
-            //            invert_plane(pf, pitch, f->GetRowSize(PLANAR_Y_ALIGNED), height, pixelsize, mask64, false, env);
-            invert_plane(pfY, pitchY, rowsizeY, heightY, pixelsize, mask64, false, env);
+            BYTE* pStart = pfY + pitchY * rr.start_row;
+
+            //invert_plane(pf, pitch, f->GetRowSize(PLANAR_Y_ALIGNED), height, pixelsize, mask64, false, env);
+            invert_plane(pStart, pitchY, rowsizeY, iNumRowsToProcess, pixelsize, mask64, false, env);
             p_out = pfY;
         }
         if (doU && (p == PLANAR_U))
         {
+            BYTE* pStartU = pfU + pitchU * rr.start_row;
             //          invert_plane(f->GetWritePtr(PLANAR_U), f->GetPitch(PLANAR_U), f->GetRowSize(PLANAR_U_ALIGNED), f->GetHeight(PLANAR_U), pixelsize, mask64, true, env);
-            invert_plane(pfU, pitchU, rowsizeU, heightU, pixelsize, mask64, true, env);
+            //invert_plane(pfU, pitchU, rowsizeU, heightU, pixelsize, mask64, true, env);
+                invert_plane(pStartU, pitchU, rowsizeU, iNumRowsToProcess, pixelsize, mask64, true, env);
             p_out = pfU;
         }
         if (doV && (p == PLANAR_V))
         {
+            BYTE* pStartV = pfV + pitchV * rr.start_row;
             //          invert_plane(f->GetWritePtr(PLANAR_V), f->GetPitch(PLANAR_V), f->GetRowSize(PLANAR_V_ALIGNED), f->GetHeight(PLANAR_V), pixelsize, mask64, true, env);
-            invert_plane(pfV, pitchV, rowsizeV, heightV, pixelsize, mask64, true, env);
+            //invert_plane(pfV, pitchV, rowsizeV, heightV, pixelsize, mask64, true, env);
+            invert_plane(pStartV, pitchV, rowsizeV, iNumRowsToProcess, pixelsize, mask64, true, env);
             p_out = pfV;
         }
     }
