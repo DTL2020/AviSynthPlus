@@ -1254,6 +1254,8 @@ enum CachePolicyHint {
   CACHE_IS_MTGUARD_REQ,
   CACHE_IS_MTGUARD_ANS,
 
+  CACHE_GET_CHILD_OUTPUT_MODES,
+
   CACHE_AVSPLUS_CUDA_CONSTANTS = 600,
 
   CACHE_GET_DEV_TYPE,          // Device types a filter can return
@@ -1281,7 +1283,6 @@ public:
   /* Need to check GetVersion first, pre v5 will return random crap from EAX reg. */
   virtual int __stdcall SetCacheHints(int cachehints,int frame_range) = 0 ;  // We do not pass cache requests upwards, only to the next filter.
   virtual const VideoInfo& __stdcall GetVideoInfo() = 0;
-  virtual int __stdcall GetSupportedOutputModes() = 0;
   virtual void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) = 0;
   virtual PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) = 0;
   virtual PVideoFrame __stdcall GetPartialFrame(int n, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
@@ -1493,7 +1494,6 @@ public:
   bool __stdcall GetParity(int n) { return child->GetParity(n); }
   int __stdcall SetCacheHints(int cachehints, int frame_range) { AVS_UNUSED(cachehints); AVS_UNUSED(frame_range); return 0; }  // We do not pass cache requests upwards, only to the next filter.
   // V12
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 };

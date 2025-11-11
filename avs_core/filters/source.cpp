@@ -96,7 +96,6 @@ public:
     }
   }
 
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 };
@@ -1820,7 +1819,6 @@ public:
       }
   };
 
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
@@ -2118,7 +2116,6 @@ public:
     AVS_UNUSED(frame_range);
     return 0; };
 
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 

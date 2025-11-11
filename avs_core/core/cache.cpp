@@ -853,11 +853,6 @@ const VideoInfo& __stdcall CacheGuard::GetVideoInfo()
     return vi;
 }
 
-int __stdcall CacheGuard::GetSupportedOutputModes()
-{
-    return child->GetSupportedOutputModes();
-}
-
 bool __stdcall CacheGuard::GetParity(int n)
 {
     return child->GetParity(n);
@@ -992,6 +987,9 @@ int __stdcall CacheGuard::SetCacheHints(int cachehints, int frame_range)
   case CACHE_GET_DEV_TYPE:
   case CACHE_GET_CHILD_DEV_TYPE:
     return (child->GetVersion() >= 5) ? child->SetCacheHints(cachehints, 0) : 0;
+
+  case CACHE_GET_CHILD_OUTPUT_MODES:
+      return (child->GetVersion() >= 12) ? child->SetCacheHints(cachehints, 0) : 0;
 
   default:
     return 0;

@@ -65,8 +65,7 @@ public:
   const VideoInfo& __stdcall GetVideoInfo();
   bool __stdcall GetParity(int n);
   int __stdcall SetCacheHints(int cachehints,int frame_range);
-  
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
+
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env);
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
@@ -117,7 +116,6 @@ public:
   bool __stdcall GetParity(int n);
   int __stdcall SetCacheHints(int cachehints, int frame_range);
 
-  int __stdcall GetSupportedOutputModes();
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env);
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env);
 

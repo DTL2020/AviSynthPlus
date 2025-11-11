@@ -78,7 +78,6 @@ public:
     return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
   }
 
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
@@ -154,13 +153,21 @@ public:
   PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override;
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
-//  bool __stdcall SupportPlaneOutput(void) override { return vi.IsPlanar() ? true : false; };
-  int __stdcall GetSupportedOutputModes(void) override { return vi.IsPlanar() ? OUTPUT_MODE_FRAME | OUTPUT_MODE_PLANE | OUTPUT_MODE_PART_PLANE : OUTPUT_MODE_FRAME | OUTPUT_MODE_PART_FRAME;  }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
 
   int __stdcall SetCacheHints(int cachehints, int frame_range) override {
     AVS_UNUSED(frame_range);
-    return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
+
+    switch (cachehints)
+    {
+        case CACHE_GET_MTMODE:
+            return MT_NICE_FILTER;
+
+        case CACHE_GET_CHILD_OUTPUT_MODES:
+            return vi.IsPlanar() ? OUTPUT_MODE_FRAME | OUTPUT_MODE_PLANE | OUTPUT_MODE_PART_PLANE : OUTPUT_MODE_FRAME | OUTPUT_MODE_PART_FRAME;
+    }
+
+    return 0;
   }
 
   static AVSValue __cdecl Create(AVSValue args, void*, IScriptEnvironment* env);
@@ -173,6 +180,7 @@ private:
   int pixelsize;
   int bits_per_pixel; // 8,10..16
 
+  int mChildOutputModes;
   int GotFrameNum;
 
   // some hack ? remember process data for all planes
@@ -303,7 +311,6 @@ public:
     return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
   }
 
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
@@ -352,7 +359,6 @@ public:
     return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
   }
 
-  int __stdcall GetSupportedOutputModes() { return OUTPUT_MODE_FRAME; }
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
   void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
