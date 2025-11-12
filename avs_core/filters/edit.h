@@ -224,7 +224,7 @@ public:
   int __stdcall SetCacheHints(int cachehints,int frame_range);
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
-  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
   static AVSValue __cdecl Create(AVSValue args, void* mode, IScriptEnvironment* env);
 

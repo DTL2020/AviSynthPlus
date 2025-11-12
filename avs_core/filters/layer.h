@@ -79,7 +79,7 @@ public:
   }
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
-  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
 private:
   const PClip child1, child2;
@@ -153,7 +153,7 @@ public:
   PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override;
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
-  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env);
 
   int __stdcall SetCacheHints(int cachehints, int frame_range) override {
     AVS_UNUSED(frame_range);
@@ -181,7 +181,7 @@ private:
   int bits_per_pixel; // 8,10..16
 
   int mChildOutputModes;
-  int GotFrameNum;
+/*  int GotFrameNum;
 
   // some hack ? remember process data for all planes
   
@@ -202,7 +202,7 @@ private:
   int pitchV;
   int rowsizeV;
   int heightV;
-
+  */
 
 };
 
@@ -312,7 +312,7 @@ public:
   }
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
-  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
   static AVSValue __cdecl Create(AVSValue args, void*, IScriptEnvironment* env);
 
@@ -360,7 +360,7 @@ public:
   }
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
-  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
   static AVSValue __cdecl Create(AVSValue args, void*, IScriptEnvironment* env);
 
