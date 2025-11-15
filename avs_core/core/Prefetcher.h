@@ -26,7 +26,7 @@ public:
   virtual const VideoInfo& __stdcall GetVideoInfo();
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
-  void* __stdcall ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) { return 0; }
 
   void Destroy();
 

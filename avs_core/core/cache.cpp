@@ -833,9 +833,9 @@ PVideoFrame __stdcall CacheGuard::GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION
 
 }
 
-void* __stdcall CacheGuard::ProcessPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env)
+void* __stdcall CacheGuard::ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env)
 {
-    return child->ProcessPlaneOfFrame(n, p, rr, env);
+    return child->ProcessPlaneOfFrame(pvf, p, rr, env);
 }
 
 
