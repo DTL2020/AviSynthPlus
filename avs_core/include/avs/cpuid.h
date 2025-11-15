@@ -76,6 +76,10 @@ enum {
 #ifdef BUILDING_AVSCORE
 int GetCPUFlags();
 void SetMaxCPU(int new_flags);
+
+int GetRowsRegionSize(); // may be not best place but somehow connected with CPU caches
+void SetRowsRegionSize(int new_size);
+
 #endif
 
 #endif // AVSCORE_CPUID_H

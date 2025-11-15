@@ -229,6 +229,7 @@ public:
   virtual void __stdcall LogMsgOnce_valist(const OneTimeLogTicket &ticket, int level, const char* fmt, va_list va) = 0;
   virtual void __stdcall VThrowError(const char* fmt, va_list va) = 0;
   virtual void __stdcall SetMaxCPU(const char *feature) = 0;
+  virtual void __stdcall SetRowsRegionSize(const int new_size) = 0;
 
   /*
     How casting down works in Avisynth, when passing differently typed 

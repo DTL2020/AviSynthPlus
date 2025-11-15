@@ -584,6 +584,12 @@ Invert::Invert(PClip _child, const char* _channels, IScriptEnvironment* env)
   }
 
   mChildOutputModes = child->SetCacheHints(CACHE_GET_CHILD_OUTPUT_MODES, 0);
+
+  int iRRSize= env->GetRowsRegionSize(); // in bytes
+  int iPlaneSize = vi.RowSize() * vi.height; // max plane 0 size ?
+
+  iNumStripes = iPlaneSize / iRRSize;
+
 }
 
 
@@ -718,7 +724,7 @@ PVideoFrame Invert::GetFrame(int n, IScriptEnvironment* env)
 	int height;
 
     ROWS_REGION rr = { 0, 0 };
-    int iNumStripes = 10; // temp here until SetStripeSize() implemented
+//
 
     if ((mChildOutputModes & OUTPUT_MODE_PLANE) && vi.IsPlanar())
     {

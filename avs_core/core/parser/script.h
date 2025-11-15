@@ -283,6 +283,7 @@ AVSValue SetCacheMode(AVSValue args, void*, IScriptEnvironment* env);
 AVSValue SetDeviceOpt(AVSValue args, void*, IScriptEnvironment* env);
 AVSValue SetMemoryMax(AVSValue args, void*, IScriptEnvironment* env);
 AVSValue SetMaxCPU(AVSValue args, void*, IScriptEnvironment* env); // 20200331
+AVSValue SetRowsRegionSize(AVSValue args, void*, IScriptEnvironment* env); // 20251115
 
 AVSValue IsY(AVSValue args, void*, IScriptEnvironment* env);
 AVSValue Is420(AVSValue args, void*, IScriptEnvironment* env);

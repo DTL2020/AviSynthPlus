@@ -308,6 +308,7 @@ extern const AVSFunction Script_functions[] = {
   { "SetCacheMode",     BUILTIN_FUNC_PREFIX, "[mode]i", SetCacheMode }, // Neo
   { "SetDeviceOpt",     BUILTIN_FUNC_PREFIX, "[opt]i[val]i", SetDeviceOpt }, // Neo
   { "SetMaxCPU",        BUILTIN_FUNC_PREFIX, "s", SetMaxCPU }, // 20200331
+  { "SetRowsRegionSize",        BUILTIN_FUNC_PREFIX, "i", SetRowsRegionSize }, // 20251115
 
   { "IsY",       BUILTIN_FUNC_PREFIX, "c", IsY },
   { "Is420",     BUILTIN_FUNC_PREFIX, "c", Is420 },
@@ -2259,6 +2260,13 @@ AVSValue SetMaxCPU(AVSValue args, void*, IScriptEnvironment* env)
   InternalEnvironment* envI = static_cast<InternalEnvironment*>(env);
   envI->SetMaxCPU(args[0].AsString());
   return AVSValue();
+}
+
+AVSValue SetRowsRegionSize(AVSValue args, void*, IScriptEnvironment* env)
+{
+    InternalEnvironment* envI = static_cast<InternalEnvironment*>(env);
+    envI->SetRowsRegionSize(args[0].AsInt());
+    return AVSValue();
 }
 
 AVSValue IsY(AVSValue args, void*, IScriptEnvironment*) {  return VI(args[0]).IsY(); }

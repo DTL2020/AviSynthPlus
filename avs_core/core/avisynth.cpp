@@ -853,6 +853,8 @@ public:
   void LogMsgOnce_valist(const OneTimeLogTicket& ticket, int level, const char* fmt, va_list va);
 
   void SetMaxCPU(const char *features); // fixme: why is here InternalEnvironment?
+  int GetRowsRegionSize();
+  void SetRowsRegionSize(const int new_size);
 
   /* INeoEnv */
   bool Invoke_(AVSValue *result, const AVSValue& implicit_last,
@@ -1522,6 +1524,16 @@ public:
   int __stdcall GetCPUFlags()
   {
     return core->GetCPUFlags();
+  }
+
+  int __stdcall GetRowsRegionSize()
+  {
+      return core->GetRowsRegionSize();
+  }
+
+  void __stdcall SetRowsRegionSize(const int new_size)
+  {
+      return core->SetRowsRegionSize(new_size);
   }
 
   char* __stdcall SaveString(const char* s, int length = -1)
@@ -3200,6 +3212,9 @@ void ScriptEnvironment::CheckVersion(int version) {
 }
 
 int ScriptEnvironment::GetCPUFlags() { return ::GetCPUFlags(); }
+
+int ScriptEnvironment::GetRowsRegionSize() { return ::GetRowsRegionSize(); }
+void ScriptEnvironment::SetRowsRegionSize(const int new_size) { return ::SetRowsRegionSize(new_size); }
 
 void ScriptEnvironment::AddFunction(const char* name, const char* params, ApplyFunc apply, void* user_data) {
   this->AddFunction(name, params, apply, user_data, NULL);

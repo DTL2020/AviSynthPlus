@@ -181,6 +181,8 @@ private:
   int bits_per_pixel; // 8,10..16
 
   int mChildOutputModes;
+  int iNumStripes; 
+
 };
 
 

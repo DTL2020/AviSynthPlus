@@ -1738,6 +1738,9 @@ public:
   virtual int __stdcall propGetDataTypeHint(const AVSMap* map, const char* key, int index, int* error) = 0; // returns AVSPropDataTypeHint
   virtual int __stdcall propSetDataH(AVSMap* map, const char* key, const char* d, int length, int type, int append) = 0;
 
+  // V12
+  virtual int __stdcall GetRowsRegionSize() = 0;
+
 }; // end class IScriptEnvironment. Order is important. Avoid overloads with the same name.
 
 
