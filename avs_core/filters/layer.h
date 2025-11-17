@@ -183,6 +183,8 @@ private:
   int mChildOutputModes;
   int iNumStripes; 
 
+  void ProcessPlane(AvsPlane p, int n, bool bChroma, PVideoFrame* pvf, bool bGetPlane, IScriptEnvironment* env);
+
 };
 
 
