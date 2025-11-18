@@ -153,7 +153,7 @@ public:
   PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override;
 
   PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
-  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env);
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
 
   int __stdcall SetCacheHints(int cachehints, int frame_range) override {
     AVS_UNUSED(frame_range);
@@ -183,7 +183,7 @@ private:
   int mChildOutputModes;
   int iNumStripes; 
 
-  void ProcessPlane(AvsPlane p, int n, bool bChroma, PVideoFrame* pvf, bool bGetPlane, IScriptEnvironment* env);
+  __inline void ProcessPlane(AvsPlane p, int n, bool bChroma, PVideoFrame* pvf, bool bGetPlane, IScriptEnvironment* env);
 
 };
 

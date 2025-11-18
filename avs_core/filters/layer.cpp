@@ -714,7 +714,7 @@ static void invert_plane(BYTE* frame, int pitch, int rowsize, int height, int pi
   }
 }
 
-void Invert::ProcessPlane(AvsPlane p, int n, bool bChroma, PVideoFrame *pvf, bool bGetPlane, IScriptEnvironment* env)
+__inline void Invert::ProcessPlane(AvsPlane p, int n, bool bChroma, PVideoFrame *pvf, bool bGetPlane, IScriptEnvironment* env)
 {
     PVideoFrame& vf = *pvf;
     ROWS_REGION rr;
@@ -893,14 +893,9 @@ PVideoFrame Invert::GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEn
 	PVideoFrame f;
 
 	if (mChildOutputModes & OUTPUT_MODE_PLANE)
-	{
-		f = child->GetPlaneOfFrame(n, p, rr, env);
-	}
-
+        f = child->GetPlaneOfFrame(n, p, rr, env);
 	else
-	{
 		f = child->GetFrame(n, env);
-	}
 
 	env->MakeWritable(&f);
 
@@ -974,12 +969,6 @@ void* Invert::ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, 
     }
     // planar RGB
     if (vi.IsPlanarRGB() || vi.IsPlanarRGBA()) {
- /*       if (doG && p == PLANAR_G)
-            invert_plane(pStart, pitch, f->GetRowSize(PLANAR_G_ALIGNED), iNumRowsToProcess, pixelsize, mask64, false, env);
-        if (doB && p == PLANAR_B)
-            invert_plane(pStart, pitch, f->GetRowSize(PLANAR_B_ALIGNED), iNumRowsToProcess, pixelsize, mask64, false, env);
-        if (doR && p == PLANAR_R)
-            invert_plane(pStart, pitch, f->GetRowSize(PLANAR_R_ALIGNED), iNumRowsToProcess, pixelsize, mask64, false, env); */
         switch (p)
         {
             case PLANAR_G:

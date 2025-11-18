@@ -2,7 +2,7 @@
 
 static int EnvCheckForRRSize()
 {
-    int iRRSize = 256000; // set init value to about 256 kByte (just an idea about 1/4 of 1 MB cache ?)
+    int iRRSize = 32000; // set init value to about 32 kByte (tests shows best about L1D cache size ?)
 
     // Todo: calculate recommended auto value as about CPU_cache_size/(Threads_num * 3) - need test for best performance value
 

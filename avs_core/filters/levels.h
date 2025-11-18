@@ -153,9 +153,21 @@ public:
   PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override;
   ~RGBAdjust();
 
+  PVideoFrame __stdcall GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
+  void* __stdcall ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env) override;
+
   int __stdcall SetCacheHints(int cachehints, int frame_range) override {
     AVS_UNUSED(frame_range);
-    return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
+//    return cachehints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
+    switch (cachehints)
+    {
+        case CACHE_GET_MTMODE:
+            return MT_NICE_FILTER;
+
+        case CACHE_GET_CHILD_OUTPUT_MODES:
+            return (vi.IsPlanar() && !dither && !analyze ) ? (OUTPUT_MODE_FRAME | OUTPUT_MODE_PLANE | OUTPUT_MODE_PART_PLANE) : OUTPUT_MODE_FRAME;
+    }
+    return 0;
   }
 
   static AVSValue __cdecl Create(AVSValue args, void*, IScriptEnvironment* env);
@@ -184,6 +196,9 @@ private:
 
   void CheckAndConvertParams(RGBAdjustConfig &config, IScriptEnvironment *env);
   void rgbadjust_create_lut(BYTE *lut_buf, const int plane, RGBAdjustConfig &config);
+
+  int mChildOutputModes;
+  int iNumStripes;
 };
 
 

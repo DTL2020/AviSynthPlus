@@ -982,6 +982,8 @@ RGBAdjust::RGBAdjust(PClip _child, double r, double g, double b, double a,
         rgbadjust_create_lut(maps[plane], plane, config);
       }
     }
+
+    mChildOutputModes = child->SetCacheHints(CACHE_GET_CHILD_OUTPUT_MODES, 0);
 }
 
 template<typename pixel_t>
@@ -1115,6 +1117,327 @@ static void apply_map_rgb_planar_c(BYTE *dstpR8, BYTE *dstpG8, BYTE *dstpB8, BYT
     if(hasAlpha)
       dstpA += pitch;
   }
+}
+
+template<typename pixel_t, bool dither>
+static void apply_map_rgb_plane_c(BYTE* dstp8, int pitch,BYTE* map,int width, int height)
+{
+    int _y = 0;
+    int _dither = 0;
+    pixel_t* dstp = reinterpret_cast<pixel_t*>(dstp8);
+    pitch /= sizeof(pixel_t);
+
+    for (int y = 0; y < height; y++) {
+        if (dither)
+            _y = (y << 4) & 0xf0;
+        for (int x = 0; x < width; x++) {
+            if (dither)
+                _dither = ditherMap[(x & 0x0f) | _y];
+            reinterpret_cast<pixel_t*>(dstp)[x] = reinterpret_cast<pixel_t*>(map)[dither ? dstp[x] << 8 | _dither : dstp[x]];
+        }
+        dstp += pitch;
+    }
+}
+
+
+PVideoFrame __stdcall RGBAdjust::GetPlaneOfFrame(int n, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env)
+{
+    PVideoFrame frame;
+
+    if (mChildOutputModes & OUTPUT_MODE_PLANE)
+        frame = child->GetPlaneOfFrame(n, p, rr, env);
+    else
+        frame = child->GetFrame(n, env);
+
+    env->MakeWritable(&frame);
+    BYTE* pf = frame->GetWritePtr();
+    const int pitch = frame->GetPitch();
+
+    int iNumRowsToProcess = rr.end_row - rr.start_row; // todo: check if end is below height 
+
+    BYTE* pStart = pf + pitch * rr.start_row;
+
+    int w = vi.width;
+    int h = std::min(iNumRowsToProcess,vi.height);
+
+    RGBAdjustConfig local_config = config;
+
+    // Read conditional variables
+    local_config.rgba[0].changed = false;
+    local_config.rgba[1].changed = false;
+    local_config.rgba[2].changed = false;
+    local_config.rgba[3].changed = false;
+    rgbadjust_read_conditional(env, &local_config, condVarSuffix);
+
+    BYTE* maps_live[4] = { nullptr };
+    BYTE* maps_local[4] = { nullptr }; // for local lut table allocation, don't overwrite common buffer
+    for (int i = 0; i < 4; i++)
+        maps_live[i] = maps[i];
+
+    if (local_config.rgba[0].changed || local_config.rgba[1].changed || local_config.rgba[2].changed || local_config.rgba[3].changed) {
+        CheckAndConvertParams(local_config, env);
+        if (use_lut) {
+            for (int plane = 0; plane < (int)number_of_maps; plane++) {
+                // recalculate plane LUT only if changed
+                if (local_config.rgba[plane].changed)
+                {
+                    maps_local[plane] = new BYTE[pixelsize * real_lookup_size];
+                    maps_live[plane] = maps_local[plane]; // use our new local lut
+                    rgbadjust_create_lut(maps_live[plane], plane, local_config);
+                }
+            }
+        }
+    }
+
+    // Planar RGB
+
+    if (pixelsize == 1) {
+        apply_map_rgb_plane_c<uint8_t, false>(pStart, pitch, maps_live[1], w, h); // maps_live[1] is for G plane ?
+    }
+    else if (pixelsize == 2) {
+        apply_map_rgb_plane_c<uint16_t, false>(pStart, pitch, maps_live[1], w, h); // maps_live[1] is for G plane ?
+    }
+    else {
+        // 32 bit float, no dither
+        const int planesRGB_RgbaOrder[4] = { PLANAR_R, PLANAR_G, PLANAR_B, PLANAR_A };
+        const int* planes = planesRGB_RgbaOrder;
+
+//        for (int cplane = 0; cplane < (hasAlpha ? 4 : 3); cplane++) {
+        int cplane = 1; // PLANAR_G ?
+            RGBAdjustPlaneConfig x = local_config.rgba[cplane];
+            const double scale = x.scale;
+            const double bias = x.bias;
+            const double gamma = 1 / x.gamma;
+            int plane = planes[cplane];
+            if ((plane != p) || (plane != PLANAR_G))
+                env->ThrowError("Only PLANAR_G first GetPlaneOfFrame call supported for now");
+
+            float* dstp = reinterpret_cast<float*>(frame->GetWritePtr(plane));
+            int pitch = frame->GetPitch(plane) / sizeof(float);
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    dstp[x] = RGBAdjust_processPixel(dstp[x], bias, scale, gamma);
+                }
+                dstp += pitch;
+            }
+  //      }
+    }
+
+    return frame;
+}
+
+void* __stdcall RGBAdjust::ProcessPlaneOfFrame(PVideoFrame* pvf, AvsPlane p, ROWS_REGION rr, IScriptEnvironment* env)
+{
+    assert(vi.IsPlanar()); // only planar formats supported
+
+    if (mChildOutputModes & OUTPUT_MODE_PLANE)
+    {
+        child->ProcessPlaneOfFrame(pvf, p, rr, env);
+    }
+
+    RGBAdjustConfig local_config = config;
+
+    // Read conditional variables
+    local_config.rgba[0].changed = false;
+    local_config.rgba[1].changed = false;
+    local_config.rgba[2].changed = false;
+    local_config.rgba[3].changed = false;
+    rgbadjust_read_conditional(env, &local_config, condVarSuffix);
+
+    BYTE* map_live = {nullptr};
+    BYTE* map_local = { nullptr }; // for local lut table allocation, don't overwrite common buffer
+    switch (p)
+    {
+        case(PLANAR_R):
+            map_live = maps[0];
+            if (local_config.rgba[0].changed)
+            {
+                CheckAndConvertParams(local_config, env);
+                if (use_lut) {
+                    if (local_config.rgba[0].changed)
+                    {
+                        map_local = new BYTE[pixelsize * real_lookup_size]; // where map memory is freed ?
+                        map_live = map_local; // use our new local lut
+                        rgbadjust_create_lut(map_live, 0, local_config);
+                    }
+                }
+            }
+            break;
+
+        case(PLANAR_G):
+            map_live = maps[1];
+            if (local_config.rgba[1].changed)
+            {
+                CheckAndConvertParams(local_config, env);
+                if (use_lut) {
+                    if (local_config.rgba[1].changed)
+                    {
+                        map_local = new BYTE[pixelsize * real_lookup_size];
+                        map_live = map_local; // use our new local lut
+                        rgbadjust_create_lut(map_live, 0, local_config);
+                    }
+                }
+            }
+            break;
+
+        case(PLANAR_B):
+            map_live = maps[2];
+            if (local_config.rgba[2].changed)
+            {
+                CheckAndConvertParams(local_config, env);
+                if (use_lut) {
+                    if (local_config.rgba[2].changed)
+                    {
+                        map_local = new BYTE[pixelsize * real_lookup_size];
+                        map_live = map_local; // use our new local lut
+                        rgbadjust_create_lut(map_live, 2, local_config);
+                    }
+                }
+            }
+            break;
+
+        case(PLANAR_A):
+            map_live = maps[3];
+            if (local_config.rgba[3].changed)
+            {
+                CheckAndConvertParams(local_config, env);
+                if (use_lut) {
+                    if (local_config.rgba[3].changed)
+                    {
+                        map_local = new BYTE[pixelsize * real_lookup_size];
+                        map_live = map_local; // use our new local lut
+                        rgbadjust_create_lut(map_live, 3, local_config);
+                    }
+                }
+            }
+            break;
+    }
+
+    const PVideoFrame& f = *pvf;
+
+    BYTE* pf = f->GetWritePtr(p);
+    int pitch = f->GetPitch(p);
+
+    int iNumRowsToProcess = rr.end_row - rr.start_row; // todo: check if end is below height 
+
+    BYTE* pStart = pf + pitch * rr.start_row;
+
+    int w = vi.width;
+    int h = iNumRowsToProcess;
+
+    // planar RGB
+        switch (p)
+        {
+            case PLANAR_G:
+                if (pixelsize == 1) {
+                    apply_map_rgb_plane_c<uint8_t, false>(pStart, pitch, map_live, w, h); 
+
+                }
+                else if (pixelsize == 2) {
+                    apply_map_rgb_plane_c<uint16_t, false>(pStart, pitch, map_live, w, h);
+                }
+                else
+                {
+                    int cplane = 1; // PLANAR_G ?
+                    RGBAdjustPlaneConfig x = local_config.rgba[cplane];
+                    const double scale = x.scale;
+                    const double bias = x.bias;
+                    const double gamma = 1 / x.gamma;
+
+                    float* dstp = reinterpret_cast<float*>(pStart);
+                    pitch /= sizeof(float);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            dstp[x] = RGBAdjust_processPixel(dstp[x], bias, scale, gamma);
+                        }
+                        dstp += pitch;
+                    }
+                }
+                break;
+
+            case PLANAR_B:
+                if (pixelsize == 1) {
+                    apply_map_rgb_plane_c<uint8_t, false>(pStart, pitch, map_live, w, h); 
+
+                }
+                else if (pixelsize == 2) {
+                    apply_map_rgb_plane_c<uint16_t, false>(pStart, pitch, map_live, w, h);
+                }
+                else
+                {
+                    int cplane = 2; // PLANAR_B ?
+                    RGBAdjustPlaneConfig x = local_config.rgba[cplane];
+                    const double scale = x.scale;
+                    const double bias = x.bias;
+                    const double gamma = 1 / x.gamma;
+
+                    float* dstp = reinterpret_cast<float*>(pStart);
+                    pitch /= sizeof(float);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            dstp[x] = RGBAdjust_processPixel(dstp[x], bias, scale, gamma);
+                        }
+                        dstp += pitch;
+                    }
+                }
+                break;
+
+            case PLANAR_R:
+                if (pixelsize == 1) {
+                    apply_map_rgb_plane_c<uint8_t, false>(pStart, pitch, map_live, w, h); 
+
+                }
+                else if (pixelsize == 2) {
+                    apply_map_rgb_plane_c<uint16_t, false>(pStart, pitch, map_live, w, h);
+                }
+                else
+                {
+                    int cplane = 0; // PLANAR_R ?
+                    RGBAdjustPlaneConfig x = local_config.rgba[cplane];
+                    const double scale = x.scale;
+                    const double bias = x.bias;
+                    const double gamma = 1 / x.gamma;
+
+                    float* dstp = reinterpret_cast<float*>(pStart);
+                    pitch /= sizeof(float);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            dstp[x] = RGBAdjust_processPixel(dstp[x], bias, scale, gamma);
+                        }
+                        dstp += pitch;
+                    }
+                }
+                break;
+
+            case PLANAR_A:
+                if (pixelsize == 1) {
+                    apply_map_rgb_plane_c<uint8_t, false>(pStart, pitch, map_live, w, h); 
+
+                }
+                else if (pixelsize == 2) {
+                    apply_map_rgb_plane_c<uint16_t, false>(pStart, pitch, map_live, w, h);
+                }
+                else
+                {
+                    int cplane = 3; // PLANAR_A ?
+                    RGBAdjustPlaneConfig x = local_config.rgba[cplane];
+                    const double scale = x.scale;
+                    const double bias = x.bias;
+                    const double gamma = 1 / x.gamma;
+
+                    float* dstp = reinterpret_cast<float*>(pStart);
+                    pitch /= sizeof(float);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            dstp[x] = RGBAdjust_processPixel(dstp[x], bias, scale, gamma);
+                        }
+                        dstp += pitch;
+                    }
+                }
+                break;
+        }
+
+    return 0;
 }
 
 
