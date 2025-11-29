@@ -35,7 +35,7 @@
 // For GetCPUFlags.  These are backwards-compatible with those in VirtualDub.
 // ending with SSE4_2
 // For emulation see https://software.intel.com/en-us/articles/intel-software-development-emulator
-enum {
+enum CPUID_FLAGS : __int64 {
                     /* oldest CPU to support extension */
   CPUF_FORCE        =  0x01,   //  N/A
   CPUF_FPU          =  0x02,   //  386/486DX
@@ -71,6 +71,13 @@ enum {
   CPUF_AVX512VL     = 0x4000000, // AVX-512 VL (128/256 Vector Length) Extensions
   CPUF_AVX512IFMA   = 0x8000000, // AVX-512 IFMA integer 52 bit
   CPUF_AVX512VBMI   = 0x10000000,// AVX-512 VBMI
+  CPUF_AVX512VBMI2  = 0x20000000,// AVX-512 VBMI2
+  CPUF_AVX512BITALG = 0x40000000,// AVX-512 BITALG
+  CPUF_AVX512VPOPCNTDQ = 0x80000000,// AVX-512 VPOPCNTDQ
+  CPUF_AVX512VP2INTERSECT = 0x100000000,// AVX-512 VP2INTERSECT , 4VNNIW and 4FMAPS not used any more ?
+  CPUF_AVX512VNNI   = 0x200000000,// AVX-512 VNNI
+  CPUF_AVX512BF16 = 0x200000000,// AVX-512 BF16
+  CPUF_AVX512FP16 = 0x400000000,// AVX-512 FP16
 };
 
 #ifdef BUILDING_AVSCORE

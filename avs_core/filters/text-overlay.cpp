@@ -2311,6 +2311,8 @@ std::string GetCpuMsg(IScriptEnvironment * env, bool avx512)
       ss << "AVX512IFMA ";
     if (flags & CPUF_AVX512VBMI)
       ss << "AVX512VBMI ";
+    if (flags & CPUF_AVX512VNNI)
+      ss << "AVX512VNNI ";
   }
   return ss.str();
 }
