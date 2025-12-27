@@ -1630,6 +1630,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       // feature flag, grouping many avx512 features
 
       // these perform very poorly in Prefetch, so we provide alternative generic version for MT
+ 
 
       if (program->filter_size_real <= 4) {
         // up to 4 coeffs it can be highly optimized with transposes, gather/permutex choice
@@ -1640,15 +1641,29 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
         return resize_h_planar_float_avx512_permutex_vstripe_ks4;
           }
 
-      if (program->filter_size_real <= 8) {
+      if (program->filter_size_real <= 8) { 
         // up to 8 coeffs it can be highly optimized with transposes, gather/permutex choice
         out_resampler_h_alternative_for_mt = resizer_h_avx512_generic_float_pix16_sub4_ks_4_8_16; // jolly joker
-        if (resize_h_planar_float_avx512_gather_permutex_vstripe_ks8_check(program)) {
+        if (resize_h_planar_float_avx512_gather_permutex_vstripe_ks8_check(program, 16)) {
+          if (!resize_h_planar_float_avx512_gather_permutex_vstripe_check(program, 8, 32, 8)) { // test 2x8 output version
+            return resize_h_planar_float_avx512_permutex_vstripe_2s8_ks8; // to be tested for performance vs generic
+          }
           return resize_h_planar_float_avx512_transpose_vstripe_ks8; // no template
         }
         return resize_h_planar_float_avx512_permutex_vstripe_ks8;
       }
 
+      if (program->filter_size_real <= 16) {
+        // up to 16 coeffs it can be highly optimized with transposes, gather/permutex choice
+        out_resampler_h_alternative_for_mt = resizer_h_avx512_generic_float_pix16_sub4_ks_4_8_16; // jolly joker
+        if (resize_h_planar_float_avx512_gather_permutex_vstripe_ks16_check(program,16)) {
+          if (!resize_h_planar_float_avx512_gather_permutex_vstripe_ks16_check(program, 8)) { // test 8 output version
+            return resize_h_planar_float_avx512_permutex_vstripe_s8_ks16; // to be tested for performance vs generic
+          }
+          return resizer_h_avx512_generic_float_pix16_sub4_ks_4_8_16;// _ks16 transpose-based version to be designed and checked // no template
+        }
+        return resize_h_planar_float_avx512_permutex_vstripe_ks16;
+      }
 
       return resizer_h_avx512_generic_float_pix16_sub4_ks_4_8_16;
       // other candidates for testing:

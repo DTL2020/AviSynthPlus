@@ -936,35 +936,11 @@ PVideoFrame __stdcall Animate::GetFrame(int n, IScriptEnvironment* env)
     if (args_before[a].IsInt() && args_after[a].IsInt()) {
       // 96.32 bit arithmetic, intermediate 128 bits inside. 
       // Uses proper rounding when returning to real integer domain.
-      int64_t start = args_before[a].AsLong();
-      int64_t end = args_after[a].AsLong();
-      int64_t interpolated_value = Muldiv_64_32_integer_arithm(start, end, stage_int_arith);
-      int64_t lower_bound = std::min(start, end);
-      int64_t upper_bound = std::max(start, end);
-      // rounding error can occur, so that the intermediate result is not between the two values
-      if (interpolated_value < lower_bound) {
-        interpolated_value = lower_bound;
-      }
-      else if (interpolated_value > upper_bound) {
-        interpolated_value = upper_bound;
-      }
-      args_now[a] = interpolated_value;
+      args_now[a] = Muldiv_64_32_integer_arithm(args_before[a].AsLong(), args_after[a].AsLong(), stage_int_arith);
     }
     else if (args_before[a].IsFloat() && args_after[a].IsFloat()) {
       // note: AsFloat() returns double
-      double start = args_before[a].AsFloat();
-      double end = args_after[a].AsFloat();
-      double interpolated_value = start * (1 - stage_mod) + end * stage_mod;
-      double lower_bound = std::min(start, end);
-      double upper_bound = std::max(start, end);
-      // rounding error can occur, so that the intermediate result is not between the two values
-      if (interpolated_value < lower_bound) {
-        interpolated_value = lower_bound;
-      }
-      else if (interpolated_value > upper_bound) {
-        interpolated_value = upper_bound;
-      }
-      args_now[a] = interpolated_value;
+      args_now[a] = args_before[a].AsFloat() * (1 - stage_mod) + args_after[a].AsFloat() * stage_mod;;
     }
     else {
       args_now[a] = args_before[a]; // bool, string, etc.. no transition

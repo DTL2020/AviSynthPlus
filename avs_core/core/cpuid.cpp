@@ -61,7 +61,7 @@ static inline void __cpuid(int cpuinfo[4], int leaf) {
 // Note: <asm/hwcap.h> may be required on some systems, 
 // but AT_HWCAP and values like HWCAP_DOTPROD are often found in sys/auxv.h or defined by toolchain.
 // We assume standard GNU/Clang behavior where flags like HWCAP_DOTPROD are available.
-#include <asm/hwcap.h>
+#include <asm/hwcap.h> 
 #elif defined(AVS_MACOS)
 // macOS/Apple Silicon uses sysctl for features
 #include <sys/types.h>
@@ -148,25 +148,27 @@ static int64_t ARMCheckForExtensions()
 #if defined(AVS_LINUX) || defined(AVS_BSD)
 
   // Linux/BSD HWCAP detection (uses AT_HWCAP/AT_HWCAP2)
-  // aarch64 implies -march=armv8-a
   // HWCAP_NEON (Basic NEON) is covered by the assumption above.
   unsigned long hwcap = getauxval(AT_HWCAP);
-  unsigned long hwcap2 = getauxval(AT_HWCAP2);
 
   // Tier 2: CPUF_ARM_DOTPROD (Dot Product)
-  // When DOTPROD exists, we have at least Armv8.2-a
-  // Safe gcc/clang flags: -march=armv8.2-a+dotprod
-  if ((hwcap & HWCAP_ASIMDDP)) {
+  if (hwcap & HWCAP_DOTPROD) {
     result |= CPUF_ARM_DOTPROD;
   }
 
   // Tier 3: CPUF_ARM_SVE2
-  // SVE2 (Scalable Vector Extension version 2) optional in v8.5-a, mandatory in v9.0-a
-  // Safe flags: -march=armv8.5-a+sve2
-  if (hwcap2 & HWCAP2_SVE2) {
+  // Check for SVE2. Note: SVE support often implies SVE2 is available on newer chips.
+  // The official SVE2 flag is often checked on hwcap2 on older systems, but is moved to hwcap
+  // on newer kernels. We check the most reliable ones.
+  // Note: On newer kernels, HWCAP2 is deprecated in favor of HWCAP
+  if (hwcap & HWCAP_SVE2) {
     result |= CPUF_ARM_SVE2;
   }
   else if (hwcap & HWCAP_SVE) {
+    // If only SVE is found, SVE2 may be implied or the next best thing.
+    // However, for strict SVE2 code path, we only rely on the SVE2 flag if available.
+    // For now, let's keep it simple and only check for SVE2, as it's the target.
+    // Future: Could add a distinct CPUF_ARM_SVE if needed.
   }
 
 #elif defined(AVS_MACOS)
