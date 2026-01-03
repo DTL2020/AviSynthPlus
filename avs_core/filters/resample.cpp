@@ -1611,6 +1611,20 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
   }
   else if (pixelsize == 2) {
 #ifdef INTEL_INTRINSICS
+#ifdef INTEL_INTRINSICS_AVX512
+    if (program->filter_size_real <= 4) {
+      // up to 4 coeffs it can be highly optimized with transposes, gather/permutex choice
+      if (bits_per_pixel < 16)
+        out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint16_t<true>; // AVX2 should present if AVX512 present
+      else
+        out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint16_t<false>;
+      if (!resize_h_planar_float_avx512_gather_permutex_vstripe_check(program, 32, 64, 4))
+        if (bits_per_pixel < 16)
+          return resize_h_planar_uint16_avx512_permutex_vstripe_ks4<true>;
+        else
+          return resize_h_planar_uint16_avx512_permutex_vstripe_ks4<false>;
+    }
+#endif
     if (CPU & CPUF_AVX2) {
       if (bits_per_pixel < 16)
         return resizer_h_avx2_generic_uint16_t<true>;
