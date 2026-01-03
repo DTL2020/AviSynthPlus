@@ -38,6 +38,9 @@
 #include <avisynth.h>
 #include "../resample_functions.h"
 
+static constexpr double CACHE_RESERVE_FACTOR = 0.75;
+int resampler_h_avx512_detect_optimal_scanline(int src_width, int tgt_width, size_t l2_cache_size_bytes, int iSampleSize);
+
 void resize_h_planar_uint8_avx512_permutex_vstripe_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
 bool resize_h_planar_float_avx512_gather_permutex_vstripe_ks4_check(ResamplingProgram* program);

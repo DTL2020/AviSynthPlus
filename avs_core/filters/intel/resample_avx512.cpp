@@ -1223,7 +1223,7 @@ void resize_h_planar_float_avx512_transpose_vstripe_ks4(BYTE* dst8, const BYTE* 
   constexpr int STRIPE_ALIGN = 16;
 
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2)
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float))
     / STRIPE_ALIGN * STRIPE_ALIGN;
 
   if (max_scanlines < STRIPE_ALIGN) max_scanlines = STRIPE_ALIGN;
@@ -1358,7 +1358,7 @@ void resize_h_planar_float_avx512_transpose_vstripe_ks8(BYTE* dst8, const BYTE* 
   constexpr int STRIPE_ALIGN = 16; // this must be multiple of PIXELS_AT_A_TIME 
 
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2)
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float))
     / STRIPE_ALIGN * STRIPE_ALIGN;
 
   if (max_scanlines < STRIPE_ALIGN) max_scanlines = STRIPE_ALIGN;
@@ -1555,7 +1555,7 @@ void resize_h_planar_float_avx512_permutex_vstripe_ks4(BYTE* dst8, const BYTE* s
 
   // e.g. i7-11700 typical L2 if 512K per core.
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2);
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float));
 
   // Vertical stripe loop for L2 cache optimization
   for (int y_from = 0; y_from < height; y_from += max_scanlines)
@@ -1683,7 +1683,7 @@ void resize_h_planar_float_avx512_permutex_vstripe_ks8(BYTE* dst8, const BYTE* s
 
   // e.g. i7-11700 typical L2 if 512K per core.
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2);
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float));
 
   // Vertical stripe loop for L2 cache optimization
   for (int y_from = 0; y_from < height; y_from += max_scanlines)
@@ -1836,7 +1836,7 @@ void resize_h_planar_float_avx512_permutex_vstripe_2s8_ks8(BYTE* dst8, const BYT
 
   // e.g. i7-11700 typical L2 if 512K per core.
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2);
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float));
 
   // Vertical stripe loop for L2 cache optimization
   for (int y_from = 0; y_from < height; y_from += max_scanlines)
@@ -2019,7 +2019,7 @@ void resize_h_planar_float_avx512_permutex_vstripe_ks16(BYTE* dst8, const BYTE* 
 
   // e.g. i7-11700 typical L2 if 512K per core.
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2);
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float));
 
   // Vertical stripe loop for L2 cache optimization
   for (int y_from = 0; y_from < height; y_from += max_scanlines)
@@ -2253,7 +2253,7 @@ void resize_h_planar_float_avx512_permutex_vstripe_2s8_ks16(BYTE* dst8, const BY
 
   // e.g. i7-11700 typical L2 if 512K per core.
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2);
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(float));
 
   // Vertical stripe loop for L2 cache optimization
   for (int y_from = 0; y_from < height; y_from += max_scanlines)
@@ -3292,7 +3292,7 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_ks4(BYTE* dst8, const BYTE* s
 
   // e.g. i7-11700 typical L2 if 512K per core.
   const size_t cache_size_L2 = program->cache_size_L2;
-  int max_scanlines = resampler_h_float_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2);
+  int max_scanlines = resampler_h_avx512_detect_optimal_scanline(program->source_size, program->target_size, cache_size_L2, sizeof(BYTE));
 
   __m512i rounder = _mm512_set1_epi32(1 << (FPScale8bits - 1));
   __m512i zero = _mm512_setzero_si512();
@@ -3579,3 +3579,53 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_ks4(BYTE* dst8, const BYTE* s
     }
   }
 }
+
+int resampler_h_avx512_detect_optimal_scanline(int src_width, int tgt_width, size_t l2_cache_size_bytes, int iSampleSize) {
+
+  // Calculate the bytes needed for one (Source + Destination) scanline strip
+  size_t scanline_bytes = (static_cast<size_t>(src_width) + static_cast<size_t>(tgt_width)) * iSampleSize;
+
+  // Calculate the reserved bytes based on the aggressive factor
+  // Use floating point math for precision, then cast to size_t
+  size_t reserved_l2_bytes = static_cast<size_t>(
+    static_cast<double>(l2_cache_size_bytes) * CACHE_RESERVE_FACTOR
+    );
+
+  // Calculate max_scanline (integer division for floor)
+  int max_scanline = static_cast<int>(reserved_l2_bytes / scanline_bytes);
+
+  // Clamp to practical bounds (4 to 64 is typical range for strip size)
+  // Dynamic by sample_size. For float32 (size=4) was 4 min and 64 max, so for uint8_t size=1 it will be 4x times more.
+  int iMinLimit = 4;
+  int iMaxLimit = 64;
+
+  switch (iSampleSize)
+  {
+    case 4:
+      iMinLimit = 4;
+      iMaxLimit = 64;
+      break;
+    case 2:
+      iMinLimit = 8;
+      iMaxLimit = 128;
+      break;
+    case 1:
+      iMinLimit = 16;
+      iMaxLimit = 256;
+      break;
+    default: // should never happen
+      iMinLimit = 4; 
+      iMaxLimit = 64;
+      break;
+  }
+
+  if (max_scanline < iMinLimit) {
+    max_scanline = iMinLimit;
+  }
+  if (max_scanline > iMaxLimit) {
+    max_scanline = iMaxLimit;
+  }
+
+  return max_scanline;
+}
+
