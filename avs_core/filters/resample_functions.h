@@ -49,7 +49,8 @@ constexpr int FPScale = 1 << FPScale8bits; // fixed point scaler (1<<14)
 constexpr int FPScale16bits = 13;
 constexpr int FPScale16 = 1 << FPScale16bits; // fixed point scaler for 10-16 bit SIMD signed operation
 // 16: fits even avx512 32-bit float Horizontal
-constexpr int ALIGN_RESIZER_TARGET_SIZE = 16;
+// but not AVX512 uint8 case, where we process 64 pixels at a time
+constexpr int ALIGN_RESIZER_TARGET_SIZE = 64;
 struct SafeLimit {
   bool overread_possible;
   int source_overread_offset;
@@ -77,10 +78,11 @@ struct ResamplingProgram {
   float* pixel_coefficient_float;
   // Array of real kernel size, handles edge cases! <= filter_size
   // for SIMD, coefficients are copied over a padded aligned storage
-  std::vector<short> kernel_sizes; 
+  std::vector<short> kernel_sizes; // temporary, used during setup only
   // 3.7.4- can be different for each line but then they get equalized and aligned.
 
   size_t cache_size_L2; // in bytes, for possible use in resizers
+  int max_scanlines; // recommended vertical stripe for h resamplers
 
   // In H resizers, when using SIMD loads for speed, these is a "danger zone".
   // If SIMD load from source pixels (src+offset) over reads beyond the allocated
@@ -98,10 +100,16 @@ struct ResamplingProgram {
   SafeLimit safelimit_32_pixels = { false, -1, -1 };
   SafeLimit safelimit_8_pixels_each8th_target = { false, -1, -1 };
   SafeLimit safelimit_16_pixels_each16th_target = { false, -1, -1 };
+  SafeLimit safelimit_64_pixels_each32th_target = { false, -1, -1 };
+  SafeLimit safelimit_128_pixels_each64th_target = { false, -1, -1 };
+
+  int resampler_h_detect_optimal_scanline(int src_width, int tgt_width, size_t l2_cache_size_bytes, size_t pixel_size);
+  bool resize_h_planar_gather_permutex_vstripe_check(int iSamplesInTheGroup, int permutex_index_diff_limit, int kernel_size);
+
 
   ResamplingProgram(int filter_size, int source_size, int target_size, double crop_start, double crop_size, int bits_per_pixel, IScriptEnvironment* env)
     : Env(env), source_size(source_size), target_size(target_size), crop_start(crop_start), crop_size(crop_size), filter_size(filter_size), filter_size_real(filter_size),
-    bits_per_pixel(bits_per_pixel), pixel_coefficient(0), pixel_coefficient_float(0)
+    bits_per_pixel(bits_per_pixel), pixel_coefficient(0), pixel_coefficient_float(0), cache_size_L2(0), max_scanlines(0)
   {
 
     filter_size_alignment = 1;
@@ -124,6 +132,8 @@ struct ResamplingProgram {
     }
 
     cache_size_L2 = env->GetEnvProperty(AEP_CACHESIZE_L2);
+    const int pixel_size_bytes = (bits_per_pixel + 7) / 8;
+    max_scanlines = resampler_h_detect_optimal_scanline(source_size, target_size, cache_size_L2, pixel_size_bytes);
 
   };
 
