@@ -1638,8 +1638,18 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       // in case of optimized avx512_permutex_vstripe resizer found, set alternative resizer for MT use
         out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint8_t; // AVX2 should present if AVX512 present
       if (program->filter_size_real <= 4) {
+<<<<<<< Updated upstream
         if (!program->resize_h_planar_gather_permutex_vstripe_check(64/*iSamplesInTheGroup*/, 128/*permutex_index_diff_limit*/, 4/*kernel_size*/))
           return resize_h_planar_uint8_avx512_permutex_vstripe_ks4;
+=======
+//        if (!program->resize_h_planar_gather_permutex_vstripe_check(64/*iSamplesInTheGroup*/, 128/*permutex_index_diff_limit*/, 4/*kernel_size*/))
+//          return resize_h_planar_uint8_avx512_permutex_vstripe_ks4;
+          if (!program->resize_h_planar_gather_permutex_vstripe_check(64/*iSamplesInTheGroup*/, 127/*permutex_index_diff_limit*/, 4/*kernel_size*/)) // 127 or 126 ?
+            if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
+              return resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4<true>;
+            else
+              return resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4<false>;
+>>>>>>> Stashed changes
       }
       if (program->filter_size_real <= 8) {
         /*
