@@ -1670,8 +1670,14 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
           return resize_h_planar_uint8_avx512_permutex_vstripe_2s32_ks8;
     }
       if (program->filter_size_real <= 16) {
-        if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 128/*permutex_index_diff_limit*/, 16/*kernel_size*/))
-          return resize_h_planar_uint8_avx512_permutex_vstripe_ks16;
+//        if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 128/*permutex_index_diff_limit*/, 16/*kernel_size*/))
+//          return resize_h_planar_uint8_avx512_permutex_vstripe_ks16;
+        if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 127/*permutex_index_diff_limit*/, 16/*kernel_size*/)) // 127 or 126 ?
+        if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
+          return resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16<true>;
+        else
+          return resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16<false>;
+
       }
       out_resampler_h_alternative_for_mt = nullptr; // not needed
     }
