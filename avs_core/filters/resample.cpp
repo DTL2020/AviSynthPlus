@@ -1704,12 +1704,50 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
             out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint16_t<true>; // AVX2 should present if AVX512 present
           else
             out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint16_t<false>;
-          if (bits_per_pixel < 16)
-            return resize_h_planar_uint16_avx512_permutex_vstripe_ks4<true>;
+
+          if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
+          {
+            if (bits_per_pixel < 16)
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<true, true>;
+            else
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<false, true>;
+          }
           else
-            return resize_h_planar_uint16_avx512_permutex_vstripe_ks4<false>;
+          {
+            if (bits_per_pixel < 16)
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<true, false>;
+            else
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<false, false>;
+
+          }
         }
       }
+      if (program->filter_size_real <= 8) {
+        if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 8/*kernel_size*/))
+        {
+          if (bits_per_pixel < 16)
+            out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint16_t<true>; // AVX2 should present if AVX512 present
+          else
+            out_resampler_h_alternative_for_mt = resizer_h_avx2_generic_uint16_t<false>;
+
+        /*  if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
+          {
+            if (bits_per_pixel < 16)
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<true, true>;
+            else
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<false, true>;
+          }
+          else*/
+          {
+            if (bits_per_pixel < 16)
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<true, false>;
+            else
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<false, false>;
+
+          }
+        }
+      }
+
     }
 #endif
     if (CPU & CPUF_AVX2) {
