@@ -2087,7 +2087,9 @@ ResamplerV FilteredResizeV::GetResampler(int CPU, int pixelsize, int bits_per_pi
 #ifdef INTEL_INTRINSICS
 #ifdef INTEL_INTRINSICS_AVX512
       if (CPU & CPUF_AVX512_FAST)
-        return resize_v_avx512_planar_uint8_t_w_sr;
+          return resize_v_avx512fast_planar_uint8_t_w;
+      else if (CPU & CPUF_AVX512_BASE)
+          return resize_v_avx512_planar_uint8_t_w_sr;
 #endif
       if (CPU & CPUF_AVX2)
         return resize_v_avx2_planar_uint8_t;

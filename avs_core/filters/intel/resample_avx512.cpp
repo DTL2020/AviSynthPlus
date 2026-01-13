@@ -2761,10 +2761,205 @@ void resize_v_avx512_planar_uint8_t_w_sr(BYTE* AVS_RESTRICT dst, const BYTE* src
 
       __m512i pack_1 = _mm512_permutex2var_epi64(result_2x8x_uint16, perm_idx1, result_2x8x_uint16_2);
       __m512i pack_2 = _mm512_permutex2var_epi64(result_2x8x_uint16, perm_idx2, result_2x8x_uint16_2);
-
       __m512i res = _mm512_packus_epi16(pack_1, pack_2);
 
+      /* possible faster ? cvtusepi16_epi8 same 2CPI as permutex2var ?
+      __m256i result_0_31_u8 = _mm512_cvtusepi16_epi8(result_2x8x_uint16);
+      __m256i result_32_63_u8 = _mm512_cvtusepi16_epi8(result_2x8x_uint16_2);
+
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x), _mm512_inserti64x4(_mm512_zextsi256_si512(result_0_31_u8), result_32_63_u8, 1));*/
+
       _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x), res);
+
+    }
+
+    dst += dst_pitch;
+    current_coeff += filter_size;
+  }
+}
+
+// loads by 512bit
+// use permutex-based conversion 8->16bit and unpacking for lo-hi FMA
+// use VNNI based FMA
+void resize_v_avx512fast_planar_uint8_t_w(BYTE* AVS_RESTRICT dst, const BYTE* src, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel)
+{
+  AVS_UNUSED(bits_per_pixel);
+  int filter_size = program->filter_size;
+  const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
+  __m512i rounder = _mm512_set1_epi32(1 << (FPScale8bits - 1));
+
+  const int kernel_size = program->filter_size_real; // not the aligned
+  const int kernel_size_mod2 = (kernel_size / 2) * 2;
+
+  assert(kernel_size == kernel_size_mod2); // expect kernel size always even (filter_support*2)
+
+  const int width_mod128 = (width / 128) * 128;
+
+  const __mmask64 k_zh8 = 0x5555555555555555ULL;
+
+  __m512i perm_0_0_31 = _mm512_set_epi16(31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+  __m512i perm_0_32_63 = _mm512_set_epi16(63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32);
+
+  __m512i m512_epi16_64 = _mm512_set1_epi16(64);
+
+  __m512i perm_1_0_31 = _mm512_add_epi16(perm_0_0_31, m512_epi16_64);
+  __m512i perm_1_32_63 = _mm512_add_epi16(perm_0_32_63, m512_epi16_64);
+    
+  const __m512i perm_r0r1_0_31lo = _mm512_unpacklo_epi16(perm_0_0_31, perm_1_0_31);
+  const __m512i perm_r0r1_0_31hi = _mm512_unpackhi_epi16(perm_0_0_31, perm_1_0_31);
+
+  const __m512i perm_r0r1_32_63lo = _mm512_unpacklo_epi16(perm_0_32_63, perm_1_32_63);
+  const __m512i perm_r0r1_32_63hi = _mm512_unpackhi_epi16(perm_0_32_63, perm_1_32_63);
+
+  for (int y = 0; y < target_height; y++) {
+    int offset = program->pixel_offset[y];
+    const BYTE* AVS_RESTRICT src_ptr = src + offset * src_pitch;
+
+    for (int x = 0; x < width_mod128; x += 128) {
+
+/*      //DEBUG
+      BYTE* src_ptr_d_r0 = const_cast<uint8_t*>(src) + 0 * src_pitch;
+      BYTE* src_ptr_d_r1 = const_cast<uint8_t*>(src) + 1 * src_pitch;
+      for (int i = 0; i < 64; i++)
+      {
+        src_ptr_d_r0[i] = (uint8_t)i;
+        src_ptr_d_r1[i] = (uint8_t)(i+64);
+      }*/
+
+      __m512i result_lo_0_31_1 = rounder;
+      __m512i result_hi_0_31_1 = rounder;
+      __m512i result_lo_0_31_2 = rounder;
+      __m512i result_hi_0_31_2 = rounder;
+
+      __m512i result_lo_32_63_1 = rounder;
+      __m512i result_hi_32_63_1 = rounder;
+      __m512i result_lo_32_63_2 = rounder;
+      __m512i result_hi_32_63_2 = rounder;
+
+      const uint8_t* AVS_RESTRICT src2_ptr = src_ptr + x;
+
+      int i = 0;
+      // 128 byte 128 pixel
+      for (; i < kernel_size_mod2; i += 2)
+      {
+        // Load two coefficients as a single packed value and broadcast
+        // To have max FMA compute performance we need to process at least 2 rows with 2 coeffs because madd and dpwssd supports 2x2 madd only.
+        const __m512i coeff_rNrNp1 = _mm512_set1_epi32(*reinterpret_cast<const int*>(current_coeff + i)); // CO|co|CO|co|CO|co|CO|co   CO|co|CO|co|CO|co|CO|co
+
+        const __m512i src64rN_1 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr));
+        const __m512i src64rN_2 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 64));
+
+        const __m512i src64rNp1_1 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + src_pitch));
+        const __m512i src64rNp1_2 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 64 + src_pitch));
+
+        const __m512i src_lo_0_31_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_0_31lo, src64rNp1_1);
+        const __m512i src_hi_0_31_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_0_31hi, src64rNp1_1);
+
+        const __m512i src_lo_32_63_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_32_63lo, src64rNp1_1);
+        const __m512i src_hi_32_63_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_32_63hi, src64rNp1_1);
+
+        const __m512i src_lo_0_31_2 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_2, perm_r0r1_0_31lo, src64rNp1_2);
+        const __m512i src_hi_0_31_2 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_2, perm_r0r1_0_31hi, src64rNp1_2);
+
+        const __m512i src_lo_32_63_2 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_2, perm_r0r1_32_63lo, src64rNp1_2);
+        const __m512i src_hi_32_63_2 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_2, perm_r0r1_32_63hi, src64rNp1_2);
+
+        result_lo_0_31_1 = _mm512_dpwssd_epi32(result_lo_0_31_1, src_lo_0_31_1, coeff_rNrNp1);
+        result_hi_0_31_1 = _mm512_dpwssd_epi32(result_hi_0_31_1, src_hi_0_31_1, coeff_rNrNp1);
+
+        result_lo_32_63_1 = _mm512_dpwssd_epi32(result_lo_32_63_1, src_lo_32_63_1, coeff_rNrNp1);
+        result_hi_32_63_1 = _mm512_dpwssd_epi32(result_hi_32_63_1, src_hi_32_63_1, coeff_rNrNp1);
+
+        result_lo_0_31_2 = _mm512_dpwssd_epi32(result_lo_0_31_2, src_lo_0_31_2, coeff_rNrNp1);
+        result_hi_0_31_2 = _mm512_dpwssd_epi32(result_hi_0_31_2, src_hi_0_31_2, coeff_rNrNp1);
+
+        result_lo_32_63_2 = _mm512_dpwssd_epi32(result_lo_32_63_2, src_lo_32_63_2, coeff_rNrNp1);
+        result_hi_32_63_2 = _mm512_dpwssd_epi32(result_hi_32_63_2, src_hi_32_63_2, coeff_rNrNp1);
+
+        src2_ptr += src_pitch * 2;
+
+      } // hope kernel_size never may be odd ?
+
+      // scale back, store
+      // shift back integer arithmetic 14 bits precision
+      result_lo_0_31_1 = _mm512_srai_epi32(result_lo_0_31_1, FPScale8bits);
+      result_hi_0_31_1 = _mm512_srai_epi32(result_hi_0_31_1, FPScale8bits);
+      result_lo_32_63_1 = _mm512_srai_epi32(result_lo_32_63_1, FPScale8bits);
+      result_hi_32_63_1 = _mm512_srai_epi32(result_hi_32_63_1, FPScale8bits);
+
+      result_lo_0_31_2 = _mm512_srai_epi32(result_lo_0_31_2, FPScale8bits);
+      result_hi_0_31_2 = _mm512_srai_epi32(result_hi_0_31_2, FPScale8bits);
+      result_lo_32_63_2 = _mm512_srai_epi32(result_lo_32_63_2, FPScale8bits);
+      result_hi_32_63_2 = _mm512_srai_epi32(result_hi_32_63_2, FPScale8bits);
+
+      __m512i result_0_31_int16_1 = _mm512_packus_epi32(result_lo_0_31_1, result_hi_0_31_1);
+      __m512i result_32_63_int16_1 = _mm512_packus_epi32(result_lo_32_63_1, result_hi_32_63_1);
+
+      __m256i result_0_31_u8_1 = _mm512_cvtusepi16_epi8(result_0_31_int16_1);
+      __m256i result_32_63_u8_1 = _mm512_cvtusepi16_epi8(result_32_63_int16_1);
+
+      __m512i result_0_31_int16_2 = _mm512_packus_epi32(result_lo_0_31_2, result_hi_0_31_2);
+      __m512i result_32_63_int16_2 = _mm512_packus_epi32(result_lo_32_63_2, result_hi_32_63_2);
+
+      __m256i result_0_31_u8_2 = _mm512_cvtusepi16_epi8(result_0_31_int16_2);
+      __m256i result_32_63_u8_2 = _mm512_cvtusepi16_epi8(result_32_63_int16_2);
+
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x), _mm512_inserti64x4(_mm512_zextsi256_si512(result_0_31_u8_1), result_32_63_u8_1, 1));
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + 64 + x), _mm512_inserti64x4(_mm512_zextsi256_si512(result_0_31_u8_2), result_32_63_u8_2, 1));
+
+    }
+
+    // 64 byte 64 pixel
+    // no need wmod16, alignment is safe at least 32
+    for (int x = width_mod128; x < width; x += 64) {
+
+      __m512i result_lo_0_31_1 = rounder;
+      __m512i result_hi_0_31_1 = rounder;
+
+      __m512i result_lo_32_63_1 = rounder;
+      __m512i result_hi_32_63_1 = rounder;
+
+      const uint8_t* AVS_RESTRICT src2_ptr = src_ptr + x;
+
+      int i = 0;
+      for (; i < kernel_size_mod2; i+=2) {
+        // Load two coefficients as a single packed value and broadcast
+        // To have max FMA compute performance we need to process at least 2 rows with 2 coeffs because madd and dpwssd supports 2x2 madd only.
+        const __m512i coeff_rNrNp1 = _mm512_set1_epi32(*reinterpret_cast<const int*>(current_coeff + i)); // CO|co|CO|co|CO|co|CO|co   CO|co|CO|co|CO|co|CO|co
+
+        const __m512i src64rN_1 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr));
+        const __m512i src64rNp1_1 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + src_pitch));
+
+        const __m512i src_lo_0_31_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_0_31lo, src64rNp1_1);
+        const __m512i src_hi_0_31_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_0_31hi, src64rNp1_1);
+
+        const __m512i src_lo_32_63_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_32_63lo, src64rNp1_1);
+        const __m512i src_hi_32_63_1 = _mm512_maskz_permutex2var_epi8(k_zh8, src64rN_1, perm_r0r1_32_63hi, src64rNp1_1);
+
+        result_lo_0_31_1 = _mm512_dpwssd_epi32(result_lo_0_31_1, src_lo_0_31_1, coeff_rNrNp1);
+        result_hi_0_31_1 = _mm512_dpwssd_epi32(result_hi_0_31_1, src_hi_0_31_1, coeff_rNrNp1);
+
+        result_lo_32_63_1 = _mm512_dpwssd_epi32(result_lo_32_63_1, src_lo_32_63_1, coeff_rNrNp1);
+        result_hi_32_63_1 = _mm512_dpwssd_epi32(result_hi_32_63_1, src_hi_32_63_1, coeff_rNrNp1);
+
+        src2_ptr += src_pitch * 2;
+
+      } // hope kernel_size never may be odd ?
+
+      // scale back, store
+      // shift back integer arithmetic 14 bits precision
+      result_lo_0_31_1 = _mm512_srai_epi32(result_lo_0_31_1, FPScale8bits);
+      result_hi_0_31_1 = _mm512_srai_epi32(result_hi_0_31_1, FPScale8bits);
+      result_lo_32_63_1 = _mm512_srai_epi32(result_lo_32_63_1, FPScale8bits);
+      result_hi_32_63_1 = _mm512_srai_epi32(result_hi_32_63_1, FPScale8bits);
+
+      __m512i result_0_31_int16_1 = _mm512_packus_epi32(result_lo_0_31_1, result_hi_0_31_1);
+      __m512i result_32_63_int16_1 = _mm512_packus_epi32(result_lo_32_63_1, result_hi_32_63_1);
+
+      __m256i result_0_31_u8_1 = _mm512_cvtusepi16_epi8(result_0_31_int16_1);
+      __m256i result_32_63_u8_1 = _mm512_cvtusepi16_epi8(result_32_63_int16_1);
+
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x), _mm512_inserti64x4(_mm512_zextsi256_si512(result_0_31_u8_1), result_32_63_u8_1, 1));
 
     }
 
