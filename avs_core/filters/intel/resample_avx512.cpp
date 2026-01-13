@@ -2817,15 +2817,6 @@ void resize_v_avx512fast_planar_uint8_t_w(BYTE* AVS_RESTRICT dst, const BYTE* sr
 
     for (int x = 0; x < width_mod128; x += 128) {
 
-/*      //DEBUG
-      BYTE* src_ptr_d_r0 = const_cast<uint8_t*>(src) + 0 * src_pitch;
-      BYTE* src_ptr_d_r1 = const_cast<uint8_t*>(src) + 1 * src_pitch;
-      for (int i = 0; i < 64; i++)
-      {
-        src_ptr_d_r0[i] = (uint8_t)i;
-        src_ptr_d_r1[i] = (uint8_t)(i+64);
-      }*/
-
       __m512i result_lo_0_31_1 = rounder;
       __m512i result_hi_0_31_1 = rounder;
       __m512i result_lo_0_31_2 = rounder;
@@ -3114,6 +3105,244 @@ void resize_v_avx512_planar_uint16_t_w_sr(BYTE* dst8, const BYTE* src8, int dst_
 template void resize_v_avx512_planar_uint16_t_w_sr<false>(BYTE* dst0, const BYTE* src0, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel);
 // avx512 10-14bit
 template void resize_v_avx512_planar_uint16_t_w_sr<true>(BYTE* dst0, const BYTE* src0, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel);
+
+template<bool lessthan16bit, bool bVNNI>
+void resize_v_avx512_planar_uint16_t_w(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel)
+{
+  int filter_size = program->filter_size;
+  const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
+
+  const __m512i zero = _mm512_setzero_si512();
+
+  const int width_mod128 = (width / 128) * 128;
+
+  const int kernel_size = program->filter_size_real; // not the aligned
+  const int kernel_size_mod2 = (kernel_size / 2) * 2;
+
+  assert(kernel_size == kernel_size_mod2); // expect kernel size always even (filter_support*2)
+
+  // for 16 bits only
+  const __m512i shifttosigned = _mm512_set1_epi16(-32768);
+  const __m512i shiftfromsigned = _mm512_set1_epi32(32768 << FPScale16bits);
+
+  const __m512i rounder = _mm512_set1_epi32(1 << (FPScale16bits - 1));
+
+  const uint16_t* src = (uint16_t*)src8;
+  uint16_t* AVS_RESTRICT dst = (uint16_t * AVS_RESTRICT)dst8;
+  dst_pitch = dst_pitch / sizeof(uint16_t);
+  src_pitch = src_pitch / sizeof(uint16_t);
+
+  const int limit = (1 << bits_per_pixel) - 1;
+  __m512i clamp_limit = _mm512_set1_epi16((short)limit); // clamp limit for <16 bits
+
+  for (int y = 0; y < target_height; y++) {
+    int offset = program->pixel_offset[y];
+    const uint16_t* src_ptr = src + offset * src_pitch;
+
+    // 128 byte 32 word
+    for (int x = 0; x < width_mod128; x += 128) {
+
+      __m512i result_lo = rounder;
+      __m512i result_hi = rounder;
+
+      __m512i result_lo_2 = rounder;
+      __m512i result_hi_2 = rounder;
+
+      __m512i result_lo_3 = rounder;
+      __m512i result_hi_3 = rounder;
+
+      __m512i result_lo_4 = rounder;
+      __m512i result_hi_4 = rounder;
+
+      const uint16_t* AVS_RESTRICT src2_ptr = src_ptr + x;
+
+      int i = 0;
+      for (; i < kernel_size_mod2; i+=2) {
+        // Load two coefficients as a single packed value and broadcast
+        // To have max FMA compute performance we need to process at least 2 rows with 2 coeffs because madd and dpwssd supports 2x2 madd only.
+        const __m512i coeff_rNrNp1 = _mm512_set1_epi32(*reinterpret_cast<const int*>(current_coeff + i)); // CO|co|CO|co|CO|co|CO|co   CO|co|CO|co|CO|co|CO|co
+
+        __m512i src_r0 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr)); // 32x 16bit pixels
+        __m512i src_r0_2 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 32)); // 32x 16bit pixels
+        __m512i src_r0_3 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 64)); // 32x 16bit pixels
+        __m512i src_r0_4 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 96)); // 32x 16bit pixels
+
+        __m512i src_r1 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + src_pitch)); // 32x 16bit pixels
+        __m512i src_r1_2 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 32 + src_pitch)); // 32x 16bit pixels
+        __m512i src_r1_3 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 64 + src_pitch)); // 32x 16bit pixels
+        __m512i src_r1_4 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + 96 + src_pitch)); // 32x 16bit pixels
+
+        if (!lessthan16bit) {
+          src_r0 = _mm512_add_epi16(src_r0, shifttosigned);
+          src_r0_2 = _mm512_add_epi16(src_r0_2, shifttosigned);
+          src_r0_3 = _mm512_add_epi16(src_r0_3, shifttosigned);
+          src_r0_4 = _mm512_add_epi16(src_r0_4, shifttosigned);
+
+          src_r1 = _mm512_add_epi16(src_r1, shifttosigned);
+          src_r1_2 = _mm512_add_epi16(src_r1_2, shifttosigned);
+          src_r1_3 = _mm512_add_epi16(src_r1_3, shifttosigned);
+          src_r1_4 = _mm512_add_epi16(src_r1_4, shifttosigned);
+
+        }
+
+        __m512i src_r0r1_lo = _mm512_unpacklo_epi16(src_r0, src_r1);
+        __m512i src_r0r1_hi = _mm512_unpackhi_epi16(src_r0, src_r1);
+
+        __m512i src_r0r1_2_lo = _mm512_unpacklo_epi16(src_r0_2, src_r1_2);
+        __m512i src_r0r1_2_hi = _mm512_unpackhi_epi16(src_r0_2, src_r1_2);
+
+        __m512i src_r0r1_3_lo = _mm512_unpacklo_epi16(src_r0_3, src_r1_3);
+        __m512i src_r0r1_3_hi = _mm512_unpackhi_epi16(src_r0_3, src_r1_3);
+
+        __m512i src_r0r1_4_lo = _mm512_unpacklo_epi16(src_r0_4, src_r1_4);
+        __m512i src_r0r1_4_hi = _mm512_unpackhi_epi16(src_r0_4, src_r1_4);
+
+
+        if (bVNNI)
+        {
+          result_lo = _mm512_dpwssd_epi32(result_lo, src_r0r1_lo, coeff_rNrNp1);
+          result_hi = _mm512_dpwssd_epi32(result_hi, src_r0r1_hi, coeff_rNrNp1);
+
+          result_lo_2 = _mm512_dpwssd_epi32(result_lo_2, src_r0r1_2_lo, coeff_rNrNp1);
+          result_hi_2 = _mm512_dpwssd_epi32(result_hi_2, src_r0r1_2_hi, coeff_rNrNp1);
+
+          result_lo_3 = _mm512_dpwssd_epi32(result_lo_3, src_r0r1_3_lo, coeff_rNrNp1);
+          result_hi_3 = _mm512_dpwssd_epi32(result_hi_3, src_r0r1_3_hi, coeff_rNrNp1);
+
+          result_lo_4 = _mm512_dpwssd_epi32(result_lo_4, src_r0r1_4_lo, coeff_rNrNp1);
+          result_hi_4 = _mm512_dpwssd_epi32(result_hi_4, src_r0r1_4_hi, coeff_rNrNp1);
+        }
+        else
+        {
+          result_lo = _mm512_add_epi32(result_lo, _mm512_madd_epi16(src_r0r1_lo, coeff_rNrNp1)); // a*b + c
+          result_hi = _mm512_add_epi32(result_hi, _mm512_madd_epi16(src_r0r1_hi, coeff_rNrNp1)); // a*b + c
+
+          result_lo_2 = _mm512_add_epi32(result_lo_2, _mm512_madd_epi16(src_r0r1_2_lo, coeff_rNrNp1)); // a*b + c
+          result_hi_2 = _mm512_add_epi32(result_hi_2, _mm512_madd_epi16(src_r0r1_2_hi, coeff_rNrNp1)); // a*b + c
+
+          result_lo_3 = _mm512_add_epi32(result_lo_3, _mm512_madd_epi16(src_r0r1_3_lo, coeff_rNrNp1)); // a*b + c
+          result_hi_3 = _mm512_add_epi32(result_hi_3, _mm512_madd_epi16(src_r0r1_3_hi, coeff_rNrNp1)); // a*b + c
+
+          result_lo_4 = _mm512_add_epi32(result_lo_4, _mm512_madd_epi16(src_r0r1_4_lo, coeff_rNrNp1)); // a*b + c
+          result_hi_4 = _mm512_add_epi32(result_hi_4, _mm512_madd_epi16(src_r0r1_4_hi, coeff_rNrNp1)); // a*b + c
+        }
+
+        src2_ptr += src_pitch * 2;
+      }
+
+      if (!lessthan16bit) {
+        result_lo = _mm512_add_epi32(result_lo, shiftfromsigned);
+        result_hi = _mm512_add_epi32(result_hi, shiftfromsigned);
+
+        result_lo_2 = _mm512_add_epi32(result_lo_2, shiftfromsigned);
+        result_hi_2 = _mm512_add_epi32(result_hi_2, shiftfromsigned);
+
+        result_lo_3 = _mm512_add_epi32(result_lo_3, shiftfromsigned);
+        result_hi_3 = _mm512_add_epi32(result_hi_3, shiftfromsigned);
+
+        result_lo_4 = _mm512_add_epi32(result_lo_4, shiftfromsigned);
+        result_hi_4 = _mm512_add_epi32(result_hi_4, shiftfromsigned);
+      }
+      // shift back integer arithmetic 13 bits precision
+      result_lo = _mm512_srai_epi32(result_lo, FPScale16bits);
+      result_hi = _mm512_srai_epi32(result_hi, FPScale16bits);
+
+      result_lo_2 = _mm512_srai_epi32(result_lo_2, FPScale16bits);
+      result_hi_2 = _mm512_srai_epi32(result_hi_2, FPScale16bits);
+
+      result_lo_3 = _mm512_srai_epi32(result_lo_3, FPScale16bits);
+      result_hi_3 = _mm512_srai_epi32(result_hi_3, FPScale16bits);
+
+      result_lo_4 = _mm512_srai_epi32(result_lo_4, FPScale16bits);
+      result_hi_4 = _mm512_srai_epi32(result_hi_4, FPScale16bits);
+
+      __m512i result_2x8x_uint16 = _mm512_packus_epi32(result_lo, result_hi);
+      __m512i result_2x8x_uint16_2 = _mm512_packus_epi32(result_lo_2, result_hi_2);
+
+      __m512i result_2x8x_uint16_3 = _mm512_packus_epi32(result_lo_3, result_hi_3);
+      __m512i result_2x8x_uint16_4 = _mm512_packus_epi32(result_lo_4, result_hi_4);
+
+      if (lessthan16bit) {
+        result_2x8x_uint16 = _mm512_min_epu16(result_2x8x_uint16, clamp_limit); // extra clamp for 10-14 bit
+        result_2x8x_uint16_2 = _mm512_min_epu16(result_2x8x_uint16_2, clamp_limit); // extra clamp for 10-14 bit
+
+        result_2x8x_uint16_3 = _mm512_min_epu16(result_2x8x_uint16_3, clamp_limit); // extra clamp for 10-14 bit
+        result_2x8x_uint16_4 = _mm512_min_epu16(result_2x8x_uint16_4, clamp_limit); // extra clamp for 10-14 bit
+
+      }
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x), result_2x8x_uint16);
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x + 32), result_2x8x_uint16_2);
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x + 64), result_2x8x_uint16_3);
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x + 96), result_2x8x_uint16_4);
+    }
+
+    // last 32..96 ?
+    // 64 byte 32 word
+    for (int x = width_mod128; x < width; x += 32) {
+
+      __m512i result_lo = rounder;
+      __m512i result_hi = rounder;
+
+      const uint16_t* AVS_RESTRICT src2_ptr = src_ptr + x;
+
+      int i = 0;
+      for (; i < kernel_size_mod2; i+=2) {
+        // Load two coefficients as a single packed value and broadcast
+        // To have max FMA compute performance we need to process at least 2 rows with 2 coeffs because madd and dpwssd supports 2x2 madd only.
+        const __m512i coeff_rNrNp1 = _mm512_set1_epi32(*reinterpret_cast<const int*>(current_coeff + i)); // CO|co|CO|co|CO|co|CO|co   CO|co|CO|co|CO|co|CO|co
+
+        __m512i src = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr)); // 32x 16bit pixels
+        __m512i src_2 = _mm512_load_si512(reinterpret_cast<const __m512i*>(src2_ptr + src_pitch)); // 32x 16bit pixels
+        if (!lessthan16bit) {
+          src = _mm512_add_epi16(src, shifttosigned);
+          src_2 = _mm512_add_epi16(src_2, shifttosigned);
+        }
+        __m512i src_lo = _mm512_unpacklo_epi16(src, src_2);
+        __m512i src_hi = _mm512_unpackhi_epi16(src, src_2);
+
+        if (bVNNI)
+        {
+          result_lo = _mm512_dpwssd_epi32(result_lo, src_lo, coeff_rNrNp1);
+          result_hi = _mm512_dpwssd_epi32(result_lo, src_hi, coeff_rNrNp1);
+        }
+        else
+        {
+          result_lo = _mm512_add_epi32(result_lo, _mm512_madd_epi16(src_lo, coeff_rNrNp1)); // a*b + c
+          result_hi = _mm512_add_epi32(result_hi, _mm512_madd_epi16(src_hi, coeff_rNrNp1)); // a*b + c
+        }
+        src2_ptr += src_pitch * 2;
+      }
+
+      if (!lessthan16bit) {
+        result_lo = _mm512_add_epi32(result_lo, shiftfromsigned);
+        result_hi = _mm512_add_epi32(result_hi, shiftfromsigned);
+      }
+      // shift back integer arithmetic 13 bits precision
+      result_lo = _mm512_srai_epi32(result_lo, FPScale16bits);
+      result_hi = _mm512_srai_epi32(result_hi, FPScale16bits);
+
+      __m512i result_2x8x_uint16 = _mm512_packus_epi32(result_lo, result_hi);
+      if (lessthan16bit) {
+        result_2x8x_uint16 = _mm512_min_epu16(result_2x8x_uint16, clamp_limit); // extra clamp for 10-14 bit
+      }
+      _mm512_stream_si512(reinterpret_cast<__m512i*>(dst + x), result_2x8x_uint16);
+
+    }
+
+    dst += dst_pitch;
+    current_coeff += filter_size;
+  }
+}
+
+// avx512 16 VNNI
+template void resize_v_avx512_planar_uint16_t_w<false, true>(BYTE* dst0, const BYTE* src0, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel);
+// avx512 10-14bit VNNI
+template void resize_v_avx512_planar_uint16_t_w<true, true>(BYTE* dst0, const BYTE* src0, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel);
+// avx512 16 BW
+template void resize_v_avx512_planar_uint16_t_w<false, false>(BYTE* dst0, const BYTE* src0, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel);
+// avx512 10-14bit BW 
+template void resize_v_avx512_planar_uint16_t_w<true, false>(BYTE* dst0, const BYTE* src0, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int target_height, int bits_per_pixel);
+
 
 //----------------------- generic horizontal avx512 float
 
