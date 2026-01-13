@@ -3771,11 +3771,11 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_ks4(BYTE* dst8, const BYTE* s
 
 // filter size up to 4
 // 64 target uint8_t pixels at a time
-// 127-byte source loads (127 uint8_t pixels, 1 uint8_t used as zero source for 8->16 conversion)
-// maximum permute index is 126 for _mm512_permutex2var_epi8 (uint8_t) 
+// 127-byte source loads (127 uint8_t pixels)
+// maximum permute index is 127 for _mm512_maskz_permutex2var_epi8 (uint8_t) 
 // more premutex version to create 8->16bit converted and low-hi unpacked registers in single permutex instruction
 template<bool bVNNI>
-void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
+void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
 {
   const int filter_size = program->filter_size; // aligned, practically the coeff table stride
 
@@ -3962,31 +3962,13 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4(BYTE* dst8, const BYTE
       perm_0_32_47 = _mm512_sub_epi32(perm_0_32_47, m512i_Start);
       perm_0_48_63 = _mm512_sub_epi32(perm_0_48_63, m512i_Start);
 
-      __m512i m512i_one_epi32 = _mm512_set1_epi32(1);
-      perm_0_0_15 = _mm512_add_epi32(perm_0_0_15, m512i_one_epi32);       // +1 because to have zeroed first byte we need to shift all permute indexes to 1 right
-      perm_0_16_31 = _mm512_add_epi32(perm_0_16_31, m512i_one_epi32);
-      perm_0_32_47 = _mm512_add_epi32(perm_0_32_47, m512i_one_epi32);
-      perm_0_48_63 = _mm512_add_epi32(perm_0_48_63, m512i_one_epi32);
-
       __m256i m256i_perm_0_0_15 = _mm512_cvtepi32_epi16(perm_0_0_15);
       __m256i m256i_perm_0_16_31 = _mm512_cvtepi32_epi16(perm_0_16_31);
       __m256i m256i_perm_0_32_47 = _mm512_cvtepi32_epi16(perm_0_32_47);
       __m256i m256i_perm_0_48_63 = _mm512_cvtepi32_epi16(perm_0_48_63);
 
-      __m128i mm128i_perm_0_0_15 = _mm256_cvtepi16_epi8(m256i_perm_0_0_15);
-      __m128i mm128i_perm_0_16_31 = _mm256_cvtepi16_epi8(m256i_perm_0_16_31);
-      __m128i mm128i_perm_0_32_47 = _mm256_cvtepi16_epi8(m256i_perm_0_32_47);
-      __m128i mm128i_perm_0_48_63 = _mm256_cvtepi16_epi8(m256i_perm_0_48_63);
-
-      // Insert each 128-bit register into the specific lane
-      __m512i perm_0 = _mm512_inserti32x4(_mm512_setzero_si512(), mm128i_perm_0_0_15, 0); // Lane 0
-      perm_0 = _mm512_inserti32x4(perm_0, mm128i_perm_0_16_31, 1); // Lane 1
-      perm_0 = _mm512_inserti32x4(perm_0, mm128i_perm_0_32_47, 2); // Lane 2
-      perm_0 = _mm512_inserti32x4(perm_0, mm128i_perm_0_48_63, 3); // Lane 3
-
-      // convert to 8 16bit registers
-      __m512i perm_0_0_31 = _mm512_cvtepi8_epi16(_mm512_extracti64x4_epi64(perm_0, 0));
-      __m512i perm_0_32_63 = _mm512_cvtepi8_epi16(_mm512_extracti64x4_epi64(perm_0, 1));
+      __m512i perm_0_0_31 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_0_15), m256i_perm_0_16_31, 1);
+      __m512i perm_0_32_63 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_32_47), m256i_perm_0_48_63, 1);
 
       // Taps are contiguous (0, 1, 2, 3), so we increment perm indexes by 1.
       __m512i perm_1_0_31 = _mm512_add_epi16(perm_0_0_31, one_epi16);
@@ -4010,16 +3992,14 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4(BYTE* dst8, const BYTE
       const __m512i perm_r2r3_32_63hi = _mm512_unpackhi_epi16(perm_2_32_63, perm_3_32_63);
 
       uint8_t* AVS_RESTRICT dst_ptr = dst8 + x + y_from * dst_pitch;
-      const uint8_t* src_ptr = src8 + (iStart - 1) + y_from * src_pitch; // all permute offsets relative to this start offset, hope masked load from -1 offset of dst8 will not cause page fault ?
+      const uint8_t* src_ptr = src8 + iStart + y_from * src_pitch; // all permute offsets relative to this start offset
 
       // Calculate remaining pixels for bounds checking in partial_load mode. 1..128 remaining pixels possible.
-      const int remaining = program->source_size - iStart; // +1 ?
+      const int remaining = program->source_size - iStart; 
       __mmask64 k1 = _bzhi_u64(~0ULL, remaining); // _bzhi_u64 creates a mask with the lower N bits set. If N >= 64, it returns all ones (~0ULL). 
       __mmask64 k2 = _bzhi_u64(~0ULL, std::max(0, remaining - 64));
 
-      const __mmask64 k_fz = ~1ULL; // zero first bit of the 64bits mask to zero first loaded byte in data_src
-      // add this to end-mask of k1
-      k1 = _kand_mask64(k1, k_fz);
+      const __mmask64 k_zh8 = 0x5555555555555555ULL;
 
       for (int y = y_from; y < y_to; y++)
       {
@@ -4033,26 +4013,26 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4(BYTE* dst8, const BYTE
         }
         else {
           // Fast unaligned loads for the safe zone
-          data_src = _mm512_maskz_loadu_epi8(k_fz, src_ptr);
+          data_src = _mm512_loadu_si512(src_ptr);
           data_src2 = _mm512_loadu_si512(src_ptr + 64);
         }
 
-        __m512i src_r0r1_0_31lo = _mm512_permutex2var_epi8(data_src, perm_r0r1_0_31lo, data_src2);
-        __m512i src_r0r1_0_31hi = _mm512_permutex2var_epi8(data_src, perm_r0r1_0_31hi, data_src2);
+        __m512i src_r0r1_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r0r1_0_31lo, data_src2);
+        __m512i src_r0r1_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r0r1_0_31hi, data_src2);
 
-        __m512i src_r0r1_32_63lo = _mm512_permutex2var_epi8(data_src, perm_r0r1_32_63lo, data_src2);
-        __m512i src_r0r1_32_63hi = _mm512_permutex2var_epi8(data_src, perm_r0r1_32_63hi, data_src2);
+        __m512i src_r0r1_32_63lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r0r1_32_63lo, data_src2);
+        __m512i src_r0r1_32_63hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r0r1_32_63hi, data_src2);
 
-        __m512i src_r2r3_0_31lo = _mm512_permutex2var_epi8(data_src, perm_r2r3_0_31lo, data_src2);
-        __m512i src_r2r3_0_31hi = _mm512_permutex2var_epi8(data_src, perm_r2r3_0_31hi, data_src2);
+        __m512i src_r2r3_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r2r3_0_31lo, data_src2);
+        __m512i src_r2r3_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r2r3_0_31hi, data_src2);
 
-        __m512i src_r2r3_32_63lo = _mm512_permutex2var_epi8(data_src, perm_r2r3_32_63lo, data_src2);
-        __m512i src_r2r3_32_63hi = _mm512_permutex2var_epi8(data_src, perm_r2r3_32_63hi, data_src2);
+        __m512i src_r2r3_32_63lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r2r3_32_63lo, data_src2);
+        __m512i src_r2r3_32_63hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_r2r3_32_63hi, data_src2);
 
         __m512i result_0_31lo, result_0_31hi;
         __m512i result_32_63lo, result_32_63hi;
 
-        if(bVNNI)
+        if (bVNNI)
         {
           result_0_31lo = _mm512_dpwssd_epi32(rounder, src_r0r1_0_31lo, coef_r0r1_0_31lo);
           result_0_31lo = _mm512_dpwssd_epi32(result_0_31lo, src_r2r3_0_31lo, coef_r2r3_0_31lo);
@@ -4115,8 +4095,9 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4(BYTE* dst8, const BYTE
   }
 }
 
-template void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4<true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-template void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks4<false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks4<true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks4<false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+
 
 // filter size up to 8
 // 64 target uint8_t pixels at a time
@@ -4541,11 +4522,11 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_ks8(BYTE* dst8, const BYTE* s
 
 // filter size up to 8
 // 64 target uint8_t pixels at a time
-// 127-byte source loads (127 uint8_t pixels), first used as zero byte for 8->16bit unpack at permute transposition
-// maximum permute index is 128 for _mm512_permutex2var_epi8 (uint8_t)
+// 128-byte source loads (128 uint8_t pixels)
+// maximum permute index is 128 for _mm512_maskz_permutex2var_epi8 (uint8_t)
 // support VNNI and madd FMA
 template<bool bVNNI>
-void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
+void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks8(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
 {
   const int filter_size = program->filter_size; // aligned, practically the coeff table stride
 
@@ -4785,31 +4766,13 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
       perm_0_32_47 = _mm512_sub_epi32(perm_0_32_47, m512i_Start);
       perm_0_48_63 = _mm512_sub_epi32(perm_0_48_63, m512i_Start);
 
-      __m512i m512i_one_epi32 = _mm512_set1_epi32(1);
-      perm_0_0_15 = _mm512_add_epi32(perm_0_0_15, m512i_one_epi32);       // +1 because to have zeroed first byte we need to shift all permute indexes to 1 right
-      perm_0_16_31 = _mm512_add_epi32(perm_0_16_31, m512i_one_epi32);
-      perm_0_32_47 = _mm512_add_epi32(perm_0_32_47, m512i_one_epi32);
-      perm_0_48_63 = _mm512_add_epi32(perm_0_48_63, m512i_one_epi32);
-
       __m256i m256i_perm_0_0_15 = _mm512_cvtepi32_epi16(perm_0_0_15);
       __m256i m256i_perm_0_16_31 = _mm512_cvtepi32_epi16(perm_0_16_31);
       __m256i m256i_perm_0_32_47 = _mm512_cvtepi32_epi16(perm_0_32_47);
       __m256i m256i_perm_0_48_63 = _mm512_cvtepi32_epi16(perm_0_48_63);
 
-      __m128i mm128i_perm_0_0_15 = _mm256_cvtepi16_epi8(m256i_perm_0_0_15);
-      __m128i mm128i_perm_0_16_31 = _mm256_cvtepi16_epi8(m256i_perm_0_16_31);
-      __m128i mm128i_perm_0_32_47 = _mm256_cvtepi16_epi8(m256i_perm_0_32_47);
-      __m128i mm128i_perm_0_48_63 = _mm256_cvtepi16_epi8(m256i_perm_0_48_63);
-
-      // Insert each 128-bit register into the specific lane
-      // __m512i perm_0 = _mm512_inserti32x4(_mm512_setzero_si512(), mm128i_perm_0_0_15, 0); // Lane 0
-      __m512i perm_0 = _mm512_inserti32x4(_mm512_zextsi128_si512(mm128i_perm_0_0_15), mm128i_perm_0_16_31, 1); // Lane 0+1
-      perm_0 = _mm512_inserti32x4(perm_0, mm128i_perm_0_32_47, 2); // Lane 2
-      perm_0 = _mm512_inserti32x4(perm_0, mm128i_perm_0_48_63, 3); // Lane 3
-
-      // convert to 2x 16bit 
-      __m512i perm_0_0_31 = _mm512_cvtepi8_epi16(_mm512_extracti64x4_epi64(perm_0, 0));
-      __m512i perm_0_32_63 = _mm512_cvtepi8_epi16(_mm512_extracti64x4_epi64(perm_0, 1));
+      __m512i perm_0_0_31 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_0_15), m256i_perm_0_16_31, 1);
+      __m512i perm_0_32_63 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_32_47), m256i_perm_0_48_63, 1);
 
       // no add_one to each perm group to save number of registers used in processing loop
       // need only to first pair (r0 and r1)
@@ -4826,16 +4789,14 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
       const __m512i two_epi16 = _mm512_set1_epi16(2);
 
       uint8_t* AVS_RESTRICT dst_ptr = dst8 + x + y_from * dst_pitch;
-      const uint8_t* src_ptr = src8 + (iStart - 1) + y_from * src_pitch; // all permute offsets relative to this start offset, hope masked load from -1 offset of dst8 will not cause page fault ?
+      const uint8_t* src_ptr = src8 + iStart + y_from * src_pitch; // all permute offsets relative to this start offset
 
       // Calculate remaining pixels for bounds checking in partial_load mode. 1..128 remaining pixels possible.
       const int remaining = program->source_size - iStart;
       __mmask64 k1 = _bzhi_u64(~0ULL, remaining); // _bzhi_u64 creates a mask with the lower N bits set. If N >= 64, it returns all ones (~0ULL). 
       const __mmask64 k2 = _bzhi_u64(~0ULL, std::max(0, remaining - 64));
 
-      const __mmask64 k_fz = ~1ULL; // zero first bit of the 64bits mask to zero first loaded byte in data_src
-      // add this to end-mask of k1
-      k1 = _kand_mask64(k1, k_fz);
+      const __mmask64 k_zh8 = 0x5555555555555555ULL;
 
       for (int y = y_from; y < y_to; y++)
       {
@@ -4855,16 +4816,16 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
         }
         else {
           // Fast unaligned loads for the safe zone
-          data_src = _mm512_maskz_loadu_epi8(k_fz, src_ptr);
+          data_src = _mm512_loadu_si512(src_ptr);
           data_src2 = _mm512_loadu_si512(src_ptr + 64);
         }
 
         // rows 0..3
-        __m512i src_r0r1_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r0r1_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r0r1_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r0r1_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
-        __m512i src_r0r1_32_63lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63lo_w, data_src2);
-        __m512i src_r0r1_32_63hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63hi_w, data_src2);
+        __m512i src_r0r1_32_63lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63lo_w, data_src2);
+        __m512i src_r0r1_32_63hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63hi_w, data_src2);
 
         // for r2r3
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
@@ -4872,11 +4833,11 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
         perm_rNrNp1_32_63lo_w = _mm512_add_epi16(perm_rNrNp1_32_63lo_w, two_epi16);
         perm_rNrNp1_32_63hi_w = _mm512_add_epi16(perm_rNrNp1_32_63hi_w, two_epi16);
 
-        __m512i src_r2r3_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r2r3_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r2r3_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r2r3_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
-        __m512i src_r2r3_32_63lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63lo_w, data_src2);
-        __m512i src_r2r3_32_63hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63hi_w, data_src2);
+        __m512i src_r2r3_32_63lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63lo_w, data_src2);
+        __m512i src_r2r3_32_63hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63hi_w, data_src2);
 
         // for r4r5
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
@@ -4912,11 +4873,11 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
         }
 
         // rows 4..7
-        __m512i src_r4r5_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r4r5_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r4r5_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r4r5_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
-        __m512i src_r4r5_32_63lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63lo_w, data_src2);
-        __m512i src_r4r5_32_63hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63hi_w, data_src2);
+        __m512i src_r4r5_32_63lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63lo_w, data_src2);
+        __m512i src_r4r5_32_63hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63hi_w, data_src2);
 
         // for r6r7
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
@@ -4924,13 +4885,13 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
         perm_rNrNp1_32_63lo_w = _mm512_add_epi16(perm_rNrNp1_32_63lo_w, two_epi16);
         perm_rNrNp1_32_63hi_w = _mm512_add_epi16(perm_rNrNp1_32_63hi_w, two_epi16);
 
-        __m512i src_r6r7_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r6r7_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r6r7_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r6r7_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
-        __m512i src_r6r7_32_63lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63lo_w, data_src2);
-        __m512i src_r6r7_32_63hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_32_63hi_w, data_src2);
+        __m512i src_r6r7_32_63lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63lo_w, data_src2);
+        __m512i src_r6r7_32_63hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_32_63hi_w, data_src2);
 
-        if(bVNNI)
+        if (bVNNI)
         {
           result_0_31lo = _mm512_dpwssd_epi32(result_0_31lo, src_r4r5_0_31lo, coef_r4r5_0_31lo);
           result_0_31lo = _mm512_dpwssd_epi32(result_0_31lo, src_r6r7_0_31lo, coef_r6r7_0_31lo);
@@ -4944,7 +4905,7 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
           result_32_63hi = _mm512_dpwssd_epi32(result_32_63hi, src_r4r5_32_63hi, coef_r4r5_32_63hi);
           result_32_63hi = _mm512_dpwssd_epi32(result_32_63hi, src_r6r7_32_63hi, coef_r6r7_32_63hi);
 
-        // rounding VNNI in first FMA already summed
+          // rounding VNNI in first FMA already summed
         }
         else
         {
@@ -5002,9 +4963,8 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE
   }
 }
 
-template void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8<true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-template void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks8<false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-
+template void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks8<true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks8<false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
 // filter size up to 8
 // 64 target uint8_t pixels at a time in 2 groups of 32 to support longer source loading to each group to support lower downsample ratios
@@ -5977,11 +5937,10 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_ks16(BYTE* dst8, const BYTE* 
 
 // filter size up to 16
 // 32 target uint8_t pixels at a time
-// 127-byte source loads (127 uint8_t pixels), first uint8 used for zeroes for 8 to 16bit unpack at permuting
-// maximum permute index is 128 for _mm512_permutex2var_epi8 (uint8_t)
-// expect to support all upsampling ratios up to filter support of 8 (or 7..6 ?) and some downsampling ratios with filter support up to 3 (with downsample ratios from 0.5 or a bit lower)
+// 128-byte source loads (128 uint8_t pixels)
+// maximum permute index is 128 for _mm512_maskz_permutex2var_epi8 (uint8_t)
 template<bool bVNNI>
-void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
+void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks16(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
 {
   const int filter_size = program->filter_size; // aligned, practically the coeff table stride
 
@@ -6326,20 +6285,10 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
       perm_0_0_15 = _mm512_sub_epi32(perm_0_0_15, m512i_Start);
       perm_0_16_31 = _mm512_sub_epi32(perm_0_16_31, m512i_Start);
 
-      __m512i m512i_one_epi32 = _mm512_set1_epi32(1);
-      perm_0_0_15 = _mm512_add_epi32(perm_0_0_15, m512i_one_epi32);       // +1 because to have zeroed first byte we need to shift all permute indexes to 1 right
-      perm_0_16_31 = _mm512_add_epi32(perm_0_16_31, m512i_one_epi32);
-
       __m256i m256i_perm_0_0_15 = _mm512_cvtepi32_epi16(perm_0_0_15);
       __m256i m256i_perm_0_16_31 = _mm512_cvtepi32_epi16(perm_0_16_31);
 
-      __m128i mm128i_perm_0_0_15 = _mm256_cvtepi16_epi8(m256i_perm_0_0_15);
-      __m128i mm128i_perm_0_16_31 = _mm256_cvtepi16_epi8(m256i_perm_0_16_31);
-
-      __m512i perm_0 = _mm512_inserti32x4(_mm512_zextsi128_si512(mm128i_perm_0_0_15), mm128i_perm_0_16_31, 1); // Lane 0+1 - 32 offsets only
-
-      // convert to 2x 16bit 
-      __m512i perm_0_0_31 = _mm512_cvtepi8_epi16(_mm512_extracti64x4_epi64(perm_0, 0));
+      __m512i perm_0_0_31 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_0_15), m256i_perm_0_16_31, 1);
 
       // no add_one to each perm group to save number of registers used in processing loop
       // need only to first pair (r0 and r1)
@@ -6352,16 +6301,14 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
       const __m512i two_epi16 = _mm512_set1_epi16(2);
 
       uint8_t* AVS_RESTRICT dst_ptr = dst8 + x + y_from * dst_pitch;
-      const uint8_t* src_ptr = src8 + (iStart - 1) + y_from * src_pitch; // all permute offsets relative to this start offset, hope masked load from -1 offset of dst8 will not cause page fault ?
+      const uint8_t* src_ptr = src8 + iStart + y_from * src_pitch; // all permute offsets relative to this start offset
 
       // Calculate remaining pixels for bounds checking in partial_load mode. 1..128 remaining pixels possible.
       const int remaining = program->source_size - iStart;
       __mmask64 k1 = _bzhi_u64(~0ULL, remaining); // _bzhi_u64 creates a mask with the lower N bits set. If N >= 64, it returns all ones (~0ULL). 
       const __mmask64 k2 = _bzhi_u64(~0ULL, std::max(0, remaining - 64));
 
-      const __mmask64 k_fz = ~1ULL; // zero first bit of the 64bits mask to zero first loaded byte in data_src
-      // add this to end-mask of k1
-      k1 = _kand_mask64(k1, k_fz);
+      const __mmask64 k_zh8 = 0x5555555555555555ULL;
 
       for (int y = y_from; y < y_to; y++)
       {
@@ -6378,20 +6325,20 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
         }
         else {
           // Fast unaligned loads for the safe zone
-          data_src = _mm512_maskz_loadu_epi8(k_fz, src_ptr);
+          data_src = _mm512_loadu_si512(src_ptr);
           data_src2 = _mm512_loadu_si512(src_ptr + 64);
         }
 
         // rows 0..3
-        __m512i src_r0r1_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r0r1_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r0r1_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r0r1_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r2r3
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
         perm_rNrNp1_0_31hi_w = _mm512_add_epi16(perm_rNrNp1_0_31hi_w, two_epi16);
 
-        __m512i src_r2r3_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r2r3_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r2r3_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r2r3_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r4r5
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
@@ -6414,15 +6361,15 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
         }
 
         // rows 4..7
-        __m512i src_r4r5_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r4r5_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r4r5_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r4r5_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r6r7
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
         perm_rNrNp1_0_31hi_w = _mm512_add_epi16(perm_rNrNp1_0_31hi_w, two_epi16);
 
-        __m512i src_r6r7_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r6r7_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r6r7_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r6r7_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r8r9
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
@@ -6444,15 +6391,15 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
         }
 
         // rows 8..11
-        __m512i src_r8r9_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r8r9_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r8r9_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r8r9_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r10r11
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
         perm_rNrNp1_0_31hi_w = _mm512_add_epi16(perm_rNrNp1_0_31hi_w, two_epi16);
 
-        __m512i src_r10r11_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r10r11_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r10r11_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r10r11_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r12r13
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
@@ -6474,15 +6421,15 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
         }
 
         // rows 12..15
-        __m512i src_r12r13_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r12r13_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r12r13_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r12r13_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         // for r14r15
         perm_rNrNp1_0_31lo_w = _mm512_add_epi16(perm_rNrNp1_0_31lo_w, two_epi16);
         perm_rNrNp1_0_31hi_w = _mm512_add_epi16(perm_rNrNp1_0_31hi_w, two_epi16);
 
-        __m512i src_r14r15_0_31lo = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31lo_w, data_src2);
-        __m512i src_r14r15_0_31hi = _mm512_permutex2var_epi8(data_src, perm_rNrNp1_0_31hi_w, data_src2);
+        __m512i src_r14r15_0_31lo = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31lo_w, data_src2);
+        __m512i src_r14r15_0_31hi = _mm512_maskz_permutex2var_epi8(k_zh8, data_src, perm_rNrNp1_0_31hi_w, data_src2);
 
         if (bVNNI)
         {
@@ -6536,8 +6483,8 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BYT
   }
 }
 
-template void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16<true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-template void resize_h_planar_uint8_avx512_permutex_vstripe_mp_ks16<false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks16<true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks16<false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
 // Horizontals uint16
 
