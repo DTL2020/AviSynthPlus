@@ -1741,6 +1741,25 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
 
           }
         }
+        if (!program->resize_h_planar_gather_permutex_vstripe_check(16/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 8/*kernel_size*/))
+        {
+          if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
+          {
+            if (bits_per_pixel < 16)
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<true, true>;
+            else
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<false, true>;
+          }
+          else
+          {
+            if (bits_per_pixel < 16)
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<true, false>;
+            else
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<false, false>;
+
+          }
+        }
+
       }
       if (program->filter_size_real <= 16) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 16/*kernel_size*/))
