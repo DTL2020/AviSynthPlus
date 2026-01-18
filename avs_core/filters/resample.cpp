@@ -1708,16 +1708,16 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<true, true>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4<true, true>;
             else
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<false, true>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4<false, true>;
           }
           else
           {
             if (bits_per_pixel < 16)
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<true, false>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4<true, false>;
             else
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4<false, false>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4<false, false>;
 
           }
         }
@@ -1728,16 +1728,16 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<true, true>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8<true, true>;
             else
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<false, true>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8<false, true>;
           }
           else
           {
             if (bits_per_pixel < 16)
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<true, false>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8<true, false>;
             else
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8<false, false>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8<false, false>;
 
           }
         }
@@ -1746,16 +1746,16 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<true, true>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<true, true>;
             else
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<false, true>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<false, true>;
           }
           else
           {
             if (bits_per_pixel < 16)
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<true, false>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<true, false>;
             else
-              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8<false, false>;
+              return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<false, false>;
 
           }
         }
