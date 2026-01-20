@@ -75,6 +75,7 @@ struct ResamplingProgram {
   // Array of array of coefficient for each pixel
   // {{pixel[0]_coeff}, {pixel[1]_coeff}, ...}
   short* pixel_coefficient;
+  short* pixel_coefficient_AVX512_H;
   float* pixel_coefficient_float;
   // Array of real kernel size, handles edge cases! <= filter_size
   // for SIMD, coefficients are copied over a padded aligned storage
@@ -109,7 +110,7 @@ struct ResamplingProgram {
 
   ResamplingProgram(int filter_size, int source_size, int target_size, double crop_start, double crop_size, int bits_per_pixel, IScriptEnvironment* env)
     : Env(env), source_size(source_size), target_size(target_size), crop_start(crop_start), crop_size(crop_size), filter_size(filter_size), filter_size_real(filter_size),
-    bits_per_pixel(bits_per_pixel), pixel_coefficient(0), pixel_coefficient_float(0), cache_size_L2(0), max_scanlines(0)
+    bits_per_pixel(bits_per_pixel), pixel_coefficient(0), pixel_coefficient_float(0), pixel_coefficient_AVX512_H(0), cache_size_L2(0), max_scanlines(0)
   {
 
     filter_size_alignment = 1;
@@ -140,6 +141,7 @@ struct ResamplingProgram {
   ~ResamplingProgram() {
     Env->Free(pixel_coefficient);
     Env->Free(pixel_coefficient_float);
+    if (pixel_coefficient_AVX512_H != 0) Env->Free(pixel_coefficient_AVX512_H);
   };
 };
 
