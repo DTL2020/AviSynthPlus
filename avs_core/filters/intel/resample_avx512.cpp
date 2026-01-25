@@ -3922,15 +3922,12 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks4(BYTE* dst8, const BYT
     int y_to = std::min(y_from + max_scanlines, height);
 
     // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
-//    const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
-        // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
     const __m512i* AVS_RESTRICT current_coeff_SIMD = (__m512i*)program->pixel_coefficient_AVX512_H;
 
     int x = 0;
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
-
       __m512i one_epi16 = _mm512_set1_epi16(1);
 
       // load coeffs from prepared
@@ -4146,7 +4143,6 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks8(BYTE* dst8, const BYT
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
-
       __m512i one_epi16 = _mm512_set1_epi16(1);
 
       // load coeffs from prepared
@@ -4722,8 +4718,8 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks16(BYTE* dst8, const BY
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
-
       __m512i one_epi16 = _mm512_set1_epi16(1);
+
       const __m512i coef_r0r1_0_31lo = _mm512_load_si512(current_coeff_SIMD + 0);
       const __m512i coef_r0r1_0_31hi = _mm512_load_si512(current_coeff_SIMD + 1);
 
@@ -5485,218 +5481,26 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4(BYTE* dst8, cons
     int y_to = std::min(y_from + max_scanlines, height);
 
     // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
-    const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
+    const __m512i* AVS_RESTRICT current_coeff_SIMD = (__m512i*)program->pixel_coefficient_AVX512_H;
 
     int x = 0;
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
-/*
-      // prepare coefs in transposed V-form
-      // 32 source pixels, 32 coeff strides
-      // TODO: make storage in transposed form, 64 x uint16 transposition looks too slow
-      // TO FIX: filter_size=4 resize uses filter_size=16 - lots or RAM/cache wasted, in the ready to use transposed form it will be much more optimized
-
-      // 4coefs of 16bit is 64bits, can be loaded as set_epi64 ?
-      __m512i coef_0_7 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 0),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 1),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 2),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 3),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 4),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 5),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 6),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 7)
-      );
-
-      __m512i coef_8_15 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 8),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 9),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 10),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 11),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 12),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 13),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 14),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 15)
-      );
-
-      __m512i coef_16_23 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 16),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 17),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 18),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 19),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 20),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 21),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 22),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 23)
-      );
-
-      __m512i coef_24_31 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 24),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 25),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 26),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 27),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 28),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 29),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 30),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 31)
-      );
-
-      // Transpose with permutex
-      __m512i c_perm_0 = _mm512_set_epi16(
-        28 + 32, 24 + 32, 20 + 32, 16 + 32, 12 + 32, 8 + 32, 4 + 32, 0 + 32, 28, 24, 20, 16, 12, 8, 4, 0,
-        28 + 32, 24 + 32, 20 + 32, 16 + 32, 12 + 32, 8 + 32, 4 + 32, 0 + 32, 28, 24, 20, 16, 12, 8, 4, 0);
       __m512i one_epi16 = _mm512_set1_epi16(1);
-      //    const __mmask32 k_high = _cvtu32_mask32(0xFFFF0000);// kmovd not present in VS2017 ?
-      const __mmask32 k_high = _mm512_kunpackw(_mm512_int2mask(0xFFFF), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
 
-      // 0.0 .. 15.0 in low 256, 16.0 .. 31.0 in high 256
-      __m512i coef_r0_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      c_perm_0 = _mm512_add_epi16(c_perm_0, one_epi16);
-      __m512i coef_r1_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      c_perm_0 = _mm512_add_epi16(c_perm_0, one_epi16);
-      __m512i coef_r2_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      c_perm_0 = _mm512_add_epi16(c_perm_0, one_epi16);
-      __m512i coef_r3_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
+      // load coeffs from prepared
+      const __m512i coef_r0r1_0_31lo = _mm512_load_si512(current_coeff_SIMD + 0);
+      const __m512i coef_r0r1_0_31hi = _mm512_load_si512(current_coeff_SIMD + 1); // in count of __m512i
 
-      // convert-transpose to H-pairs for madd ? better to do with single permutex in future
-      // 4 to 4 512 registers - finally real working coeffs to store in the transposed resampling program for block of 64 target samples
-      __m512i coef_r0r1_0_31lo = _mm512_unpacklo_epi16(coef_r0_0_31w, coef_r1_0_31w);
-      __m512i coef_r0r1_0_31hi = _mm512_unpackhi_epi16(coef_r0_0_31w, coef_r1_0_31w);
+      const __m512i coef_r0r1_32_63lo = _mm512_load_si512(current_coeff_SIMD + 2);
+      const __m512i coef_r0r1_32_63hi = _mm512_load_si512(current_coeff_SIMD + 3);
 
-      __m512i coef_r2r3_0_31lo = _mm512_unpacklo_epi16(coef_r2_0_31w, coef_r3_0_31w);
-      __m512i coef_r2r3_0_31hi = _mm512_unpackhi_epi16(coef_r2_0_31w, coef_r3_0_31w);
+      const __m512i coef_r2r3_0_31lo = _mm512_load_si512(current_coeff_SIMD + 4);
+      const __m512i coef_r2r3_0_31hi = _mm512_load_si512(current_coeff_SIMD + 5);
 
-      // TODO: store transposed resampling program coeffs to temp buffer for reusage at each line
-*/
-// prepare coefs in transposed V-form
-// TODO: make storage in transposed form, 64 x uint16 transposition looks too slow
-// TO FIX: filter_size=4 resize uses filter_size=16 - lots or RAM/cache wasted, in the ready to use transposed form it will be much more optimized
-
-// 4coefs of 16bit is 64bits, can be loaded as set_epi64 ?
-      __m512i coef_0_7 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 0),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 1),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 2),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 3),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 4),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 5),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 6),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 7)
-      );
-
-      __m512i coef_8_15 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 8),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 9),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 10),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 11),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 12),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 13),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 14),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 15)
-      );
-
-      __m512i coef_16_23 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 16),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 17),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 18),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 19),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 20),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 21),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 22),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 23)
-      );
-
-      __m512i coef_24_31 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 24),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 25),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 26),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 27),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 28),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 29),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 30),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 31)
-      );
-
-      __m512i coef_32_39 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 32),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 33),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 34),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 35),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 36),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 37),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 38),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 39)
-      );
-
-      __m512i coef_40_47 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 40),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 41),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 42),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 43),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 44),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 45),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 46),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 47)
-      );
-
-      __m512i coef_48_55 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 48),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 49),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 50),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 51),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 52),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 53),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 54),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 55)
-      );
-
-      __m512i coef_56_63 = _mm512_setr_epi64(
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 56),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 57),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 58),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 59),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 60),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 61),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 62),
-        *reinterpret_cast<const long long*>(current_coeff + filter_size * 63)
-      );
-
-      // Transpose with permutex
-      __m512i c_perm_0 = _mm512_set_epi16(28 + 32, 24 + 32, 20 + 32, 16 + 32, 12 + 32, 8 + 32, 4 + 32, 0 + 32, 28, 24, 20, 16, 12, 8, 4, 0,
-        28 + 32, 24 + 32, 20 + 32, 16 + 32, 12 + 32, 8 + 32, 4 + 32, 0 + 32, 28, 24, 20, 16, 12, 8, 4, 0);
-      __m512i one_epi16 = _mm512_set1_epi16(1);
-      //    const __mmask32 k_high = _cvtu32_mask32(0xFFFF0000);// kmovd not present in VS2017 ?
-      const __mmask32 k_high = _mm512_kunpackw(_mm512_int2mask(0xFFFF), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
-      // 0.0 .. 15.0 in low 256, 16.0 .. 31.0 in high 256
-      __m512i coef_r0_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      // 32.0 .. 47.0  in low 256, 48.0 .. 63.0 in high 256
-      __m512i coef_r0_32_63w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_32_39, c_perm_0, coef_40_47), _mm512_permutex2var_epi16(coef_48_55, c_perm_0, coef_56_63));
-      c_perm_0 = _mm512_add_epi16(c_perm_0, one_epi16);
-      __m512i coef_r1_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      __m512i coef_r1_32_63w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_32_39, c_perm_0, coef_40_47), _mm512_permutex2var_epi16(coef_48_55, c_perm_0, coef_56_63));
-      c_perm_0 = _mm512_add_epi16(c_perm_0, one_epi16);
-      __m512i coef_r2_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      __m512i coef_r2_32_63w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_32_39, c_perm_0, coef_40_47), _mm512_permutex2var_epi16(coef_48_55, c_perm_0, coef_56_63));
-      c_perm_0 = _mm512_add_epi16(c_perm_0, one_epi16);
-      __m512i coef_r3_0_31w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_0_7, c_perm_0, coef_8_15), _mm512_permutex2var_epi16(coef_16_23, c_perm_0, coef_24_31));
-      __m512i coef_r3_32_63w = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(coef_32_39, c_perm_0, coef_40_47), _mm512_permutex2var_epi16(coef_48_55, c_perm_0, coef_56_63));
-
-      // convert-transpose to H-pairs for madd ? better to do with single permutex in future
-      // 8 to 8 512 registers - finally real working coeffs to store in the transposed resampling program for block of 64 target samples
-      const __m512i coef_r0r1_0_31lo = _mm512_unpacklo_epi16(coef_r0_0_31w, coef_r1_0_31w);
-      const __m512i coef_r0r1_0_31hi = _mm512_unpackhi_epi16(coef_r0_0_31w, coef_r1_0_31w);
-
-      const __m512i coef_r0r1_32_63lo = _mm512_unpacklo_epi16(coef_r0_32_63w, coef_r1_32_63w);
-      const __m512i coef_r0r1_32_63hi = _mm512_unpackhi_epi16(coef_r0_32_63w, coef_r1_32_63w);
-
-      const __m512i coef_r2r3_0_31lo = _mm512_unpacklo_epi16(coef_r2_0_31w, coef_r3_0_31w);
-      const __m512i coef_r2r3_0_31hi = _mm512_unpackhi_epi16(coef_r2_0_31w, coef_r3_0_31w);
-
-      const __m512i coef_r2r3_32_63lo = _mm512_unpacklo_epi16(coef_r2_32_63w, coef_r3_32_63w);
-      const __m512i coef_r2r3_32_63hi = _mm512_unpackhi_epi16(coef_r2_32_63w, coef_r3_32_63w);
-
-      // TODO: store transposed resampling program coeffs to temp buffer for reusage at each line
+      const __m512i coef_r2r3_32_63lo = _mm512_load_si512(current_coeff_SIMD + 6);
+      const __m512i coef_r2r3_32_63hi = _mm512_load_si512(current_coeff_SIMD + 7);
 
       // convert resampling program in H-form into permuting indexes for src transposition in V-form
       __m512i perm_0_0_15 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x])); // 16 offsets
@@ -5729,25 +5533,13 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4(BYTE* dst8, cons
 
       // Taps are contiguous (0, 1, 2, 3), so we increment perm indexes by 1.
       __m512i perm_1_0_31 = _mm512_add_epi16(perm_0_0_31, one_epi16);
-//      __m512i perm_2_0_31 = _mm512_add_epi16(perm_1_0_31, one_epi16);
-//      __m512i perm_3_0_31 = _mm512_add_epi16(perm_2_0_31, one_epi16);
-
-      // Taps are contiguous (0, 1, 2, 3), so we increment perm indexes by 1.
       __m512i perm_1_32_63 = _mm512_add_epi16(perm_0_32_63, one_epi16);
-//      __m512i perm_2_32_63 = _mm512_add_epi16(perm_1_32_63, one_epi16);
-//      __m512i perm_3_32_63 = _mm512_add_epi16(perm_2,_32_63 one_epi16);
 
       const __m512i perm_r0r1_0_31lo = _mm512_unpacklo_epi16(perm_0_0_31, perm_1_0_31);
       const __m512i perm_r0r1_0_31hi = _mm512_unpackhi_epi16(perm_0_0_31, perm_1_0_31);
 
-//      const __m512i perm_r2r3_0_31lo = _mm512_unpacklo_epi16(perm_2, perm_3);
-//      const __m512i perm_r2r3_0_31hi = _mm512_unpackhi_epi16(perm_2, perm_3);
-
       const __m512i perm_r0r1_32_63lo = _mm512_unpacklo_epi16(perm_0_32_63, perm_1_32_63);
       const __m512i perm_r0r1_32_63hi = _mm512_unpackhi_epi16(perm_0_32_63, perm_1_32_63);
-
-//      const __m512i perm_r2r3_0_31lo = _mm512_unpacklo_epi16(perm_2, perm_3);
-//      const __m512i perm_r2r3_0_31hi = _mm512_unpackhi_epi16(perm_2, perm_3);
 
       const __m512i two_epi16 = _mm512_set1_epi16(2);
 
@@ -5916,7 +5708,7 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4(BYTE* dst8, cons
         src_ptr_32_63 += src_pitch;
       }
 
-      current_coeff += filter_size * PIXELS_AT_A_TIME;
+      current_coeff_SIMD += 8; // in number of __m512i
     };
 
     // Process the 'safe zone' where direct full unaligned loads are acceptable.
@@ -5995,187 +5787,38 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8(BYTE* dst8, cons
     int y_to = std::min(y_from + max_scanlines, height);
 
     // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
-    const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
+    const __m512i* AVS_RESTRICT current_coeff_SIMD = (__m512i*)program->pixel_coefficient_AVX512_H;
 
     int x = 0;
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
-
-      // 8coefs of 16bit is 128bits 
-      __m512i coef_0_3 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 0), (__m128i*)(current_coeff + filter_size * 1), (__m128i*)(current_coeff + filter_size * 2), (__m128i*)(current_coeff + filter_size * 3));
-      __m512i coef_4_7 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 4), (__m128i*)(current_coeff + filter_size * 5), (__m128i*)(current_coeff + filter_size * 6), (__m128i*)(current_coeff + filter_size * 7));
-      __m512i coef_8_11 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 8), (__m128i*)(current_coeff + filter_size * 9), (__m128i*)(current_coeff + filter_size * 10), (__m128i*)(current_coeff + filter_size * 11));
-      __m512i coef_12_15 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 12), (__m128i*)(current_coeff + filter_size * 13), (__m128i*)(current_coeff + filter_size * 14), (__m128i*)(current_coeff + filter_size * 15));
-      __m512i coef_16_19 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 16), (__m128i*)(current_coeff + filter_size * 17), (__m128i*)(current_coeff + filter_size * 18), (__m128i*)(current_coeff + filter_size * 19));
-      __m512i coef_20_23 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 20), (__m128i*)(current_coeff + filter_size * 21), (__m128i*)(current_coeff + filter_size * 22), (__m128i*)(current_coeff + filter_size * 23));
-      __m512i coef_24_27 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 24), (__m128i*)(current_coeff + filter_size * 25), (__m128i*)(current_coeff + filter_size * 26), (__m128i*)(current_coeff + filter_size * 27));
-      __m512i coef_28_31 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 28), (__m128i*)(current_coeff + filter_size * 29), (__m128i*)(current_coeff + filter_size * 30), (__m128i*)(current_coeff + filter_size * 31));
-
-      __m512i coef_32_35 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 32), (__m128i*)(current_coeff + filter_size * 33), (__m128i*)(current_coeff + filter_size * 34), (__m128i*)(current_coeff + filter_size * 35));
-      __m512i coef_36_39 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 36), (__m128i*)(current_coeff + filter_size * 37), (__m128i*)(current_coeff + filter_size * 38), (__m128i*)(current_coeff + filter_size * 39));
-      __m512i coef_40_43 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 40), (__m128i*)(current_coeff + filter_size * 41), (__m128i*)(current_coeff + filter_size * 42), (__m128i*)(current_coeff + filter_size * 43));
-      __m512i coef_44_47 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 44), (__m128i*)(current_coeff + filter_size * 45), (__m128i*)(current_coeff + filter_size * 46), (__m128i*)(current_coeff + filter_size * 47));
-      __m512i coef_48_51 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 48), (__m128i*)(current_coeff + filter_size * 49), (__m128i*)(current_coeff + filter_size * 50), (__m128i*)(current_coeff + filter_size * 51));
-      __m512i coef_52_55 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 52), (__m128i*)(current_coeff + filter_size * 53), (__m128i*)(current_coeff + filter_size * 54), (__m128i*)(current_coeff + filter_size * 55));
-      __m512i coef_56_59 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 56), (__m128i*)(current_coeff + filter_size * 57), (__m128i*)(current_coeff + filter_size * 58), (__m128i*)(current_coeff + filter_size * 59));
-      __m512i coef_60_63 = _mm512i_loadu_4_m128i(
-      (__m128i*)(current_coeff + filter_size * 60), (__m128i*)(current_coeff + filter_size * 61), (__m128i*)(current_coeff + filter_size * 62), (__m128i*)(current_coeff + filter_size * 63));
-
-      // Transpose with permutex
-      __m512i c_perm_0_7 = _mm512_set_epi16(
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0);
-      __m512i c_perm_8_15 = _mm512_set_epi16(
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0,
-        0, 0, 0, 0, 0, 0, 0, 0);
-      __m512i c_perm_16_23 = _mm512_set_epi16(
-        0, 0, 0, 0, 0, 0, 0, 0,
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0);
-      __m512i c_perm_24_31 = _mm512_set_epi16(
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0);
-
       __m512i one_epi16 = _mm512_set1_epi16(1);
-      //    const __mmask32 k_high = _cvtu32_mask32(0xFFFF0000);// kmovd not present in VS2017 ?
-      const __mmask32 k_8_15 = _mm512_kunpackw(_mm512_int2mask(0x0000), _mm512_int2mask(0xFF00)); // temp fix for VS2017 builds
-      const __mmask32 k_16_23 = _mm512_kunpackw(_mm512_int2mask(0x00FF), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
-      const __mmask32 k_24_31 = _mm512_kunpackw(_mm512_int2mask(0xFF00), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
 
-      auto inc_perms = [&](
-        __m512i& c0_7,
-        __m512i& c8_15,
-        __m512i& c16_23,
-        __m512i& c24_31
-        ) {
-        c0_7 = _mm512_add_epi16(c0_7, one_epi16);
-        c8_15 = _mm512_add_epi16(c8_15, one_epi16);
-        c16_23 = _mm512_add_epi16(c16_23, one_epi16);
-        c24_31 = _mm512_add_epi16(c24_31, one_epi16);
-      };
+      // load coeffs from prepared
+      const __m512i coef_r0r1_0_31lo = _mm512_load_si512(current_coeff_SIMD + 0);
+      const __m512i coef_r0r1_0_31hi = _mm512_load_si512(current_coeff_SIMD + 1); // in count of __m512i
 
-      auto make_row_0_63 = [&](
-        __m512i& row_0_31w, __m512i& row_32_63w,
-        __m512i c0_7, __m512i c8_15, __m512i c16_23, __m512i c24_31
-        ) {
-        // 0..31
-        row_0_31w = _mm512_mask_blend_epi16(
-          k_8_15,
-          _mm512_permutex2var_epi16(coef_0_3, c0_7, coef_4_7),
-          _mm512_permutex2var_epi16(coef_8_11, c8_15, coef_12_15)
-        );
-        row_0_31w = _mm512_mask_blend_epi16(
-          k_16_23,
-          row_0_31w,
-          _mm512_permutex2var_epi16(coef_16_19, c16_23, coef_20_23)
-        );
-        row_0_31w = _mm512_mask_blend_epi16(
-          k_24_31,
-          row_0_31w,
-          _mm512_permutex2var_epi16(coef_24_27, c24_31, coef_28_31)
-        );
+      const __m512i coef_r0r1_32_63lo = _mm512_load_si512(current_coeff_SIMD + 2);
+      const __m512i coef_r0r1_32_63hi = _mm512_load_si512(current_coeff_SIMD + 3);
 
-        // 32..63
-        row_32_63w = _mm512_mask_blend_epi16(
-          k_8_15,
-          _mm512_permutex2var_epi16(coef_32_35, c0_7, coef_36_39),
-          _mm512_permutex2var_epi16(coef_40_43, c8_15, coef_44_47)
-        );
-        row_32_63w = _mm512_mask_blend_epi16(
-          k_16_23,
-          row_32_63w,
-          _mm512_permutex2var_epi16(coef_48_51, c16_23, coef_52_55)
-        );
-        row_32_63w = _mm512_mask_blend_epi16(
-          k_24_31,
-          row_32_63w,
-          _mm512_permutex2var_epi16(coef_56_59, c24_31, coef_60_63)
-        );
-      };
+      const __m512i coef_r2r3_0_31lo = _mm512_load_si512(current_coeff_SIMD + 4);
+      const __m512i coef_r2r3_0_31hi = _mm512_load_si512(current_coeff_SIMD + 5);
 
-      __m512i coef_r0_0_31w, coef_r0_32_63w;
-      __m512i coef_r1_0_31w, coef_r1_32_63w;
-      __m512i coef_r2_0_31w, coef_r2_32_63w;
-      __m512i coef_r3_0_31w, coef_r3_32_63w;
-      __m512i coef_r4_0_31w, coef_r4_32_63w;
-      __m512i coef_r5_0_31w, coef_r5_32_63w;
-      __m512i coef_r6_0_31w, coef_r6_32_63w;
-      __m512i coef_r7_0_31w, coef_r7_32_63w;
+      const __m512i coef_r2r3_32_63lo = _mm512_load_si512(current_coeff_SIMD + 6);
+      const __m512i coef_r2r3_32_63hi = _mm512_load_si512(current_coeff_SIMD + 7);
 
-      // r0
-      make_row_0_63(coef_r0_0_31w, coef_r0_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r1
-      make_row_0_63(coef_r1_0_31w, coef_r1_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r2
-      make_row_0_63(coef_r2_0_31w, coef_r2_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r3
-      make_row_0_63(coef_r3_0_31w, coef_r3_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r4
-      make_row_0_63(coef_r4_0_31w, coef_r4_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r5
-      make_row_0_63(coef_r5_0_31w, coef_r5_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r6
-      make_row_0_63(coef_r6_0_31w, coef_r6_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r7
-      make_row_0_63(coef_r7_0_31w, coef_r7_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
+      const __m512i coef_r4r5_0_31lo = _mm512_load_si512(current_coeff_SIMD + 8);
+      const __m512i coef_r4r5_0_31hi = _mm512_load_si512(current_coeff_SIMD + 9);
 
-      // convert-transpose to H-pairs for madd ? better to do with single permutex in future
-      // 16 to 16 512 registers - finally real working coeffs to store in the transposed resampling program for block of 64 target samples
-      __m512i coef_r0r1_0_31lo = _mm512_unpacklo_epi16(coef_r0_0_31w, coef_r1_0_31w);
-      __m512i coef_r0r1_0_31hi = _mm512_unpackhi_epi16(coef_r0_0_31w, coef_r1_0_31w);
+      const __m512i coef_r4r5_32_63lo = _mm512_load_si512(current_coeff_SIMD + 10);
+      const __m512i coef_r4r5_32_63hi = _mm512_load_si512(current_coeff_SIMD + 11);
 
-      __m512i coef_r0r1_32_63lo = _mm512_unpacklo_epi16(coef_r0_32_63w, coef_r1_32_63w);
-      __m512i coef_r0r1_32_63hi = _mm512_unpackhi_epi16(coef_r0_32_63w, coef_r1_32_63w);
+      const __m512i coef_r6r7_0_31lo = _mm512_load_si512(current_coeff_SIMD + 12);
+      const __m512i coef_r6r7_0_31hi = _mm512_load_si512(current_coeff_SIMD + 13);
 
-      __m512i coef_r2r3_0_31lo = _mm512_unpacklo_epi16(coef_r2_0_31w, coef_r3_0_31w);
-      __m512i coef_r2r3_0_31hi = _mm512_unpackhi_epi16(coef_r2_0_31w, coef_r3_0_31w);
-
-      __m512i coef_r2r3_32_63lo = _mm512_unpacklo_epi16(coef_r2_32_63w, coef_r3_32_63w);
-      __m512i coef_r2r3_32_63hi = _mm512_unpackhi_epi16(coef_r2_32_63w, coef_r3_32_63w);
-
-      __m512i coef_r4r5_0_31lo = _mm512_unpacklo_epi16(coef_r4_0_31w, coef_r5_0_31w);
-      __m512i coef_r4r5_0_31hi = _mm512_unpackhi_epi16(coef_r4_0_31w, coef_r5_0_31w);
-
-      __m512i coef_r4r5_32_63lo = _mm512_unpacklo_epi16(coef_r4_32_63w, coef_r5_32_63w);
-      __m512i coef_r4r5_32_63hi = _mm512_unpackhi_epi16(coef_r4_32_63w, coef_r5_32_63w);
-
-      __m512i coef_r6r7_0_31lo = _mm512_unpacklo_epi16(coef_r6_0_31w, coef_r7_0_31w);
-      __m512i coef_r6r7_0_31hi = _mm512_unpackhi_epi16(coef_r6_0_31w, coef_r7_0_31w);
-
-      __m512i coef_r6r7_32_63lo = _mm512_unpacklo_epi16(coef_r6_32_63w, coef_r7_32_63w);
-      __m512i coef_r6r7_32_63hi = _mm512_unpackhi_epi16(coef_r6_32_63w, coef_r7_32_63w);
-
-      // TODO: store transposed resampling program coeffs to temp buffer for reusage at each line
+      const __m512i coef_r6r7_32_63lo = _mm512_load_si512(current_coeff_SIMD + 14);
+      const __m512i coef_r6r7_32_63hi = _mm512_load_si512(current_coeff_SIMD + 15);
 
       // convert resampling program in H-form into permuting indexes for src transposition in V-form
       __m512i perm_0_0_15 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x])); // 16 offsets
@@ -6461,7 +6104,7 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8(BYTE* dst8, cons
         src_ptr_32_63 += src_pitch;
       }
 
-      current_coeff += filter_size * PIXELS_AT_A_TIME;
+      current_coeff_SIMD += 16; // internal function const in number of __m512i
     };
 
     // Process the 'safe zone' where direct full unaligned loads are acceptable.
@@ -6542,223 +6185,39 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8(BYTE* dst8, cons
     int y_to = std::min(y_from + max_scanlines, height);
 
     // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
-    const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
+    const __m512i* AVS_RESTRICT current_coeff_SIMD = (__m512i*)program->pixel_coefficient_AVX512_H;
 
     int x = 0;
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
 
-            // 8coefs of 16bit is 128bits 
-      __m512i coef_0_3 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 0), (__m128i*)(current_coeff + filter_size * 1), (__m128i*)(current_coeff + filter_size * 2), (__m128i*)(current_coeff + filter_size * 3));
-      __m512i coef_4_7 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 4), (__m128i*)(current_coeff + filter_size * 5), (__m128i*)(current_coeff + filter_size * 6), (__m128i*)(current_coeff + filter_size * 7));
-      __m512i coef_8_11 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 8), (__m128i*)(current_coeff + filter_size * 9), (__m128i*)(current_coeff + filter_size * 10), (__m128i*)(current_coeff + filter_size * 11));
-      __m512i coef_12_15 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 12), (__m128i*)(current_coeff + filter_size * 13), (__m128i*)(current_coeff + filter_size * 14), (__m128i*)(current_coeff + filter_size * 15));
-      __m512i coef_16_19 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 16), (__m128i*)(current_coeff + filter_size * 17), (__m128i*)(current_coeff + filter_size * 18), (__m128i*)(current_coeff + filter_size * 19));
-      __m512i coef_20_23 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 20), (__m128i*)(current_coeff + filter_size * 21), (__m128i*)(current_coeff + filter_size * 22), (__m128i*)(current_coeff + filter_size * 23));
-      __m512i coef_24_27 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 24), (__m128i*)(current_coeff + filter_size * 25), (__m128i*)(current_coeff + filter_size * 26), (__m128i*)(current_coeff + filter_size * 27));
-      __m512i coef_28_31 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 28), (__m128i*)(current_coeff + filter_size * 29), (__m128i*)(current_coeff + filter_size * 30), (__m128i*)(current_coeff + filter_size * 31));
-
-      __m512i coef_32_35 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 32), (__m128i*)(current_coeff + filter_size * 33), (__m128i*)(current_coeff + filter_size * 34), (__m128i*)(current_coeff + filter_size * 35));
-      __m512i coef_36_39 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 36), (__m128i*)(current_coeff + filter_size * 37), (__m128i*)(current_coeff + filter_size * 38), (__m128i*)(current_coeff + filter_size * 39));
-      __m512i coef_40_43 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 40), (__m128i*)(current_coeff + filter_size * 41), (__m128i*)(current_coeff + filter_size * 42), (__m128i*)(current_coeff + filter_size * 43));
-      __m512i coef_44_47 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 44), (__m128i*)(current_coeff + filter_size * 45), (__m128i*)(current_coeff + filter_size * 46), (__m128i*)(current_coeff + filter_size * 47));
-      __m512i coef_48_51 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 48), (__m128i*)(current_coeff + filter_size * 49), (__m128i*)(current_coeff + filter_size * 50), (__m128i*)(current_coeff + filter_size * 51));
-      __m512i coef_52_55 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 52), (__m128i*)(current_coeff + filter_size * 53), (__m128i*)(current_coeff + filter_size * 54), (__m128i*)(current_coeff + filter_size * 55));
-      __m512i coef_56_59 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 56), (__m128i*)(current_coeff + filter_size * 57), (__m128i*)(current_coeff + filter_size * 58), (__m128i*)(current_coeff + filter_size * 59));
-      __m512i coef_60_63 = _mm512i_loadu_4_m128i(
-        (__m128i*)(current_coeff + filter_size * 60), (__m128i*)(current_coeff + filter_size * 61), (__m128i*)(current_coeff + filter_size * 62), (__m128i*)(current_coeff + filter_size * 63));
-
-      // Transpose with permutex
-      __m512i c_perm_0_7 = _mm512_set_epi16(
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0);
-      __m512i c_perm_8_15 = _mm512_set_epi16(
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0,
-        0, 0, 0, 0, 0, 0, 0, 0);
-      __m512i c_perm_16_23 = _mm512_set_epi16(
-        0, 0, 0, 0, 0, 0, 0, 0,
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0);
-      __m512i c_perm_24_31 = _mm512_set_epi16(
-        24 + 32, 16 + 32, 8 + 32, 0 + 32, 24, 16, 8, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0);
-
       __m512i one_epi16 = _mm512_set1_epi16(1);
-      //    const __mmask32 k_high = _cvtu32_mask32(0xFFFF0000);// kmovd not present in VS2017 ?
-      const __mmask32 k_8_15 = _mm512_kunpackw(_mm512_int2mask(0x0000), _mm512_int2mask(0xFF00)); // temp fix for VS2017 builds
-      const __mmask32 k_16_23 = _mm512_kunpackw(_mm512_int2mask(0x00FF), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
-      const __mmask32 k_24_31 = _mm512_kunpackw(_mm512_int2mask(0xFF00), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
 
-      auto inc_perms = [&](
-        __m512i& c0_7,
-        __m512i& c8_15,
-        __m512i& c16_23,
-        __m512i& c24_31
-        ) {
-        c0_7 = _mm512_add_epi16(c0_7, one_epi16);
-        c8_15 = _mm512_add_epi16(c8_15, one_epi16);
-        c16_23 = _mm512_add_epi16(c16_23, one_epi16);
-        c24_31 = _mm512_add_epi16(c24_31, one_epi16);
-      };
+      // load coeffs from prepared
+      const __m512i coef_r0r1_0_31lo = _mm512_load_si512(current_coeff_SIMD + 0);
+      const __m512i coef_r0r1_0_31hi = _mm512_load_si512(current_coeff_SIMD + 1); // in count of __m512i
 
-      auto make_row_0_63 = [&](
-        __m512i& row_0_31w, __m512i& row_32_63w,
-        __m512i c0_7, __m512i c8_15, __m512i c16_23, __m512i c24_31
-        ) {
-        // 0..31
-        row_0_31w = _mm512_mask_blend_epi16(
-          k_8_15,
-          _mm512_permutex2var_epi16(coef_0_3, c0_7, coef_4_7),
-          _mm512_permutex2var_epi16(coef_8_11, c8_15, coef_12_15)
-        );
-        row_0_31w = _mm512_mask_blend_epi16(
-          k_16_23,
-          row_0_31w,
-          _mm512_permutex2var_epi16(coef_16_19, c16_23, coef_20_23)
-        );
-        row_0_31w = _mm512_mask_blend_epi16(
-          k_24_31,
-          row_0_31w,
-          _mm512_permutex2var_epi16(coef_24_27, c24_31, coef_28_31)
-        );
+      const __m512i coef_r0r1_32_63lo = _mm512_load_si512(current_coeff_SIMD + 2);
+      const __m512i coef_r0r1_32_63hi = _mm512_load_si512(current_coeff_SIMD + 3);
 
-        // 32..63
-        row_32_63w = _mm512_mask_blend_epi16(
-          k_8_15,
-          _mm512_permutex2var_epi16(coef_32_35, c0_7, coef_36_39),
-          _mm512_permutex2var_epi16(coef_40_43, c8_15, coef_44_47)
-        );
-        row_32_63w = _mm512_mask_blend_epi16(
-          k_16_23,
-          row_32_63w,
-          _mm512_permutex2var_epi16(coef_48_51, c16_23, coef_52_55)
-        );
-        row_32_63w = _mm512_mask_blend_epi16(
-          k_24_31,
-          row_32_63w,
-          _mm512_permutex2var_epi16(coef_56_59, c24_31, coef_60_63)
-        );
-      };
+      const __m512i coef_r2r3_0_31lo = _mm512_load_si512(current_coeff_SIMD + 4);
+      const __m512i coef_r2r3_0_31hi = _mm512_load_si512(current_coeff_SIMD + 5);
 
-      __m512i coef_r0_0_31w, coef_r0_32_63w;
-      __m512i coef_r1_0_31w, coef_r1_32_63w;
-      __m512i coef_r2_0_31w, coef_r2_32_63w;
-      __m512i coef_r3_0_31w, coef_r3_32_63w;
-      __m512i coef_r4_0_31w, coef_r4_32_63w;
-      __m512i coef_r5_0_31w, coef_r5_32_63w;
-      __m512i coef_r6_0_31w, coef_r6_32_63w;
-      __m512i coef_r7_0_31w, coef_r7_32_63w;
+      const __m512i coef_r2r3_32_63lo = _mm512_load_si512(current_coeff_SIMD + 6);
+      const __m512i coef_r2r3_32_63hi = _mm512_load_si512(current_coeff_SIMD + 7);
 
-      // r0
-      make_row_0_63(coef_r0_0_31w, coef_r0_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r1
-      make_row_0_63(coef_r1_0_31w, coef_r1_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r2
-      make_row_0_63(coef_r2_0_31w, coef_r2_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r3
-      make_row_0_63(coef_r3_0_31w, coef_r3_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r4
-      make_row_0_63(coef_r4_0_31w, coef_r4_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r5
-      make_row_0_63(coef_r5_0_31w, coef_r5_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r6
-      make_row_0_63(coef_r6_0_31w, coef_r6_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      inc_perms(c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
-      // r7
-      make_row_0_63(coef_r7_0_31w, coef_r7_32_63w, c_perm_0_7, c_perm_8_15, c_perm_16_23, c_perm_24_31);
+      const __m512i coef_r4r5_0_31lo = _mm512_load_si512(current_coeff_SIMD + 8);
+      const __m512i coef_r4r5_0_31hi = _mm512_load_si512(current_coeff_SIMD + 9);
 
-      // convert-transpose to H-pairs for madd ? better to do with single permutex in future
-      // 16 to 16 512 registers - finally real working coeffs to store in the transposed resampling program for block of 64 target samples
-      __m512i coef_r0r1_0_31lo = _mm512_unpacklo_epi16(coef_r0_0_31w, coef_r1_0_31w);
-      __m512i coef_r0r1_0_31hi = _mm512_unpackhi_epi16(coef_r0_0_31w, coef_r1_0_31w);
+      const __m512i coef_r4r5_32_63lo = _mm512_load_si512(current_coeff_SIMD + 10);
+      const __m512i coef_r4r5_32_63hi = _mm512_load_si512(current_coeff_SIMD + 11);
 
-      __m512i coef_r0r1_32_63lo = _mm512_unpacklo_epi16(coef_r0_32_63w, coef_r1_32_63w);
-      __m512i coef_r0r1_32_63hi = _mm512_unpackhi_epi16(coef_r0_32_63w, coef_r1_32_63w);
+      const __m512i coef_r6r7_0_31lo = _mm512_load_si512(current_coeff_SIMD + 12);
+      const __m512i coef_r6r7_0_31hi = _mm512_load_si512(current_coeff_SIMD + 13);
 
-      __m512i coef_r2r3_0_31lo = _mm512_unpacklo_epi16(coef_r2_0_31w, coef_r3_0_31w);
-      __m512i coef_r2r3_0_31hi = _mm512_unpackhi_epi16(coef_r2_0_31w, coef_r3_0_31w);
-
-      __m512i coef_r2r3_32_63lo = _mm512_unpacklo_epi16(coef_r2_32_63w, coef_r3_32_63w);
-      __m512i coef_r2r3_32_63hi = _mm512_unpackhi_epi16(coef_r2_32_63w, coef_r3_32_63w);
-
-      __m512i coef_r4r5_0_31lo = _mm512_unpacklo_epi16(coef_r4_0_31w, coef_r5_0_31w);
-      __m512i coef_r4r5_0_31hi = _mm512_unpackhi_epi16(coef_r4_0_31w, coef_r5_0_31w);
-
-      __m512i coef_r4r5_32_63lo = _mm512_unpacklo_epi16(coef_r4_32_63w, coef_r5_32_63w);
-      __m512i coef_r4r5_32_63hi = _mm512_unpackhi_epi16(coef_r4_32_63w, coef_r5_32_63w);
-
-      __m512i coef_r6r7_0_31lo = _mm512_unpacklo_epi16(coef_r6_0_31w, coef_r7_0_31w);
-      __m512i coef_r6r7_0_31hi = _mm512_unpackhi_epi16(coef_r6_0_31w, coef_r7_0_31w);
-
-      __m512i coef_r6r7_32_63lo = _mm512_unpacklo_epi16(coef_r6_32_63w, coef_r7_32_63w);
-      __m512i coef_r6r7_32_63hi = _mm512_unpackhi_epi16(coef_r6_32_63w, coef_r7_32_63w);
-
-      // TODO: store transposed resampling program coeffs to temp buffer for reusage at each line
-
-
-      /* 2s16
-            // convert resampling program in H-form into permuting indexes for src transposition in V-form
-      __m512i perm_0_0_15 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x])); // 16 offsets
-      __m512i perm_0_16_31 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x + 16])); //  16 offsets
-
-      int iStart = program->pixel_offset[x];
-      __m512i m512i_Start = _mm512_set1_epi32(iStart);
-      int iStart_2 = program->pixel_offset[x + 16];  // start offset for second group of 16 targets
-      __m512i m512i_Start_2 = _mm512_set1_epi32(iStart_2);
-
-      perm_0_0_15 = _mm512_sub_epi32(perm_0_0_15, m512i_Start);
-      perm_0_16_31 = _mm512_sub_epi32(perm_0_16_31, m512i_Start_2);
-
-      __m256i m256i_perm_0_0_15 = _mm512_cvtepi32_epi16(perm_0_0_15);
-      __m256i m256i_perm_0_16_31 = _mm512_cvtepi32_epi16(perm_0_16_31);
-
-      // Insert each 256-bit register into the specific lane
-      __m512i perm_0_0_31 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_0_15), m256i_perm_0_16_31, 1);
-
-      // no add_one to each perm group to save number of registers used in processing loop
-      // need only to first pair (r0 and r1)
-      __m512i perm_1_0_31 = _mm512_add_epi16(perm_0_0_31, one_epi16);
-
-      const __m512i perm_r0r1_0_31lo = _mm512_unpacklo_epi16(perm_0_0_31, perm_1_0_31);
-      const __m512i perm_r0r1_0_31hi = _mm512_unpackhi_epi16(perm_0_0_31, perm_1_0_31);
-
-      // Taps are contiguous (0, 1, 2, 3), so we increment perm indexes by 1 (in pairs by 2 each).
-      const __m512i two_epi16 = _mm512_set1_epi16(2);
-
-      uint16_t* AVS_RESTRICT dst_ptr = dst + x + y_from * dst_pitch;
-      const uint16_t* src_ptr = src + iStart + y_from * src_pitch; // all permute offsets relative to this start offset
-      const uint16_t* src_ptr_2 = src + iStart_2 + y_from * src_pitch; // all permute offsets in second group of 32 relative to this start offset
-
-      */
+      const __m512i coef_r6r7_32_63lo = _mm512_load_si512(current_coeff_SIMD + 14);
+      const __m512i coef_r6r7_32_63hi = _mm512_load_si512(current_coeff_SIMD + 15);
 
       // convert resampling program in H-form into permuting indexes for src transposition in V-form
       __m512i perm_0_0_15 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x])); // 16 offsets
@@ -6766,12 +6225,6 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8(BYTE* dst8, cons
 
       __m512i perm_0_32_47 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x + 32])); //  16 offsets
       __m512i perm_0_48_63 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x + 48])); //  16 offsets
-
-/*      int iStart_0_31 = program->pixel_offset[x];
-      __m512i m512i_Start_0_31 = _mm512_set1_epi32(iStart_0_31);
-
-      int iStart_32_63 = program->pixel_offset[x + 32];
-      __m512i m512i_Start_32_63 = _mm512_set1_epi32(iStart_32_63);*/
 
       int iStart_0_15 = program->pixel_offset[x];
       __m512i m512i_Start_0_15 = _mm512_set1_epi32(iStart_0_15);
@@ -7085,7 +6538,7 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8(BYTE* dst8, cons
         src_ptr_48_63 += src_pitch;
       }
 
-      current_coeff += filter_size * PIXELS_AT_A_TIME;
+      current_coeff_SIMD += 16; // internal function const in number of __m512i
     };
 
     // Process the 'safe zone' where direct full unaligned loads are acceptable.
@@ -7165,301 +6618,37 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BY
     int y_to = std::min(y_from + max_scanlines, height);
 
     // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
-    const short* AVS_RESTRICT current_coeff = program->pixel_coefficient;
+    const __m512i* AVS_RESTRICT current_coeff_SIMD = (__m512i*)program->pixel_coefficient_AVX512_H;
 
     int x = 0;
 
     // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
     auto do_h_integer_core = [&](auto partial_load) {
-
-      // prepare coefs in transposed V-form
-      // TODO: make storage in transposed form, 64 x uint16 transposition looks too slow
-
-      // 16coefs of 16bit is 256bits - load as pairs of _m256i
-      // hope 16-coeffs blocks are 32-bytes aligned for m256i aligned loads ?
-      __m512i coef_0_1 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 0), (__m256i*)(current_coeff + filter_size * 1));
-      __m512i coef_2_3 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 2), (__m256i*)(current_coeff + filter_size * 3));
-      __m512i coef_4_5 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 4), (__m256i*)(current_coeff + filter_size * 5));
-      __m512i coef_6_7 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 6), (__m256i*)(current_coeff + filter_size * 7));
-      __m512i coef_8_9 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 8), (__m256i*)(current_coeff + filter_size * 9));
-      __m512i coef_10_11 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 10), (__m256i*)(current_coeff + filter_size * 11));
-      __m512i coef_12_13 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 12), (__m256i*)(current_coeff + filter_size * 13));
-      __m512i coef_14_15 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 14), (__m256i*)(current_coeff + filter_size * 15));
-      __m512i coef_16_17 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 16), (__m256i*)(current_coeff + filter_size * 17));
-      __m512i coef_18_19 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 18), (__m256i*)(current_coeff + filter_size * 19));
-      __m512i coef_20_21 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 20), (__m256i*)(current_coeff + filter_size * 21));
-      __m512i coef_22_23 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 22), (__m256i*)(current_coeff + filter_size * 23));
-      __m512i coef_24_25 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 24), (__m256i*)(current_coeff + filter_size * 25));
-      __m512i coef_26_27 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 26), (__m256i*)(current_coeff + filter_size * 27));
-      __m512i coef_28_29 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 28), (__m256i*)(current_coeff + filter_size * 29));
-      __m512i coef_30_31 = _mm512i_load_2_m256i((__m256i*)(current_coeff + filter_size * 30), (__m256i*)(current_coeff + filter_size * 31));
-
-      // Transpose with permutex
-      __m512i c_perm_0_3 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0);
-
-      __m512i c_perm_4_7 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0);
-
-      __m512i c_perm_8_11 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0);
-
-      __m512i c_perm_12_15 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0);
-
-      __m512i c_perm_16_19 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0);
-
-      __m512i c_perm_20_23 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0);
-
-      __m512i c_perm_24_27 = _mm512_set_epi16(
-        0, 0, 0, 0,
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0);
-
-      __m512i c_perm_28_31 = _mm512_set_epi16(
-        16 + 32, 0 + 32, 16, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0);
-
-
       __m512i one_epi16 = _mm512_set1_epi16(1);
 
-      // Define masks for the 4-word (8-byte, 4x 16-bit word) segments within the 32-word vector.
-      // Note: Each AVX-512 word (epi16) lane corresponds to one bit in the __mmask32.
-      // The masks target chunks of 4 words (k_X_Y represents bits X through Y inclusive).
-      //    const __mmask32 k_high = _cvtu32_mask32(0xFFFF0000);// kmovd not present in VS2017 ?
-      const __mmask32 k_4_7 = _mm512_kunpackw(_mm512_int2mask(0x0000), _mm512_int2mask(0x00F0)); // temp fix for VS2017 builds
-      const __mmask32 k_8_11 = _mm512_kunpackw(_mm512_int2mask(0x0000), _mm512_int2mask(0x0F00)); // temp fix for VS2017 builds
-      const __mmask32 k_12_15 = _mm512_kunpackw(_mm512_int2mask(0x0000), _mm512_int2mask(0xF000)); // temp fix for VS2017 builds
-      const __mmask32 k_16_19 = _mm512_kunpackw(_mm512_int2mask(0x000F), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
-      const __mmask32 k_20_23 = _mm512_kunpackw(_mm512_int2mask(0x00F0), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
-      const __mmask32 k_24_27 = _mm512_kunpackw(_mm512_int2mask(0x0F00), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
-      const __mmask32 k_28_31 = _mm512_kunpackw(_mm512_int2mask(0xF000), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
+      const __m512i coef_r0r1_0_31lo = _mm512_load_si512(current_coeff_SIMD + 0);
+      const __m512i coef_r0r1_0_31hi = _mm512_load_si512(current_coeff_SIMD + 1);
 
-      // Helper lambda to increment all eight permutation vectors by one.
-      auto inc_perms = [&](
-        __m512i& p0_3, __m512i& p4_7, __m512i& p8_11, __m512i& p12_15,
-        __m512i& p16_19, __m512i& p20_23, __m512i& p24_27, __m512i& p28_31
-        ) {
-        p0_3 = _mm512_add_epi16(p0_3, one_epi16);
-        p4_7 = _mm512_add_epi16(p4_7, one_epi16);
-        p8_11 = _mm512_add_epi16(p8_11, one_epi16);
-        p12_15 = _mm512_add_epi16(p12_15, one_epi16);
-        p16_19 = _mm512_add_epi16(p16_19, one_epi16);
-        p20_23 = _mm512_add_epi16(p20_23, one_epi16);
-        p24_27 = _mm512_add_epi16(p24_27, one_epi16);
-        p28_31 = _mm512_add_epi16(p28_31, one_epi16);
-      };
+      const __m512i coef_r2r3_0_31lo = _mm512_load_si512(current_coeff_SIMD + 2);
+      const __m512i coef_r2r3_0_31hi = _mm512_load_si512(current_coeff_SIMD + 3);
 
-      // Helper lambda to construct one full 32-word (512-bit) coefficient row.
-      // It uses mask blending to merge the results of _mm512_permutex2var_epi16
-      // for different 4-word segments, using the current permutation vectors.
-      auto make_coef_row = [&](
-        __m512i& row_result,
-        __m512i p0_3, __m512i p4_7, __m512i p8_11, __m512i p12_15,
-        __m512i p16_19, __m512i p20_23, __m512i p24_27, __m512i p28_31
-        ) {
-        // Start with the first segment (words 0-3) and the fourth segment (words 4-7).
-        row_result = _mm512_mask_blend_epi16(
-          k_4_7,
-          _mm512_permutex2var_epi16(coef_0_1, p0_3, coef_2_3),  // words 0-3 (unmasked)
-          _mm512_permutex2var_epi16(coef_4_5, p4_7, coef_6_7)   // words 4-7 (masked)
-        );
+      const __m512i coef_r4r5_0_31lo = _mm512_load_si512(current_coeff_SIMD + 4);
+      const __m512i coef_r4r5_0_31hi = _mm512_load_si512(current_coeff_SIMD + 5);
 
-        // Merge segment 8-11
-        row_result = _mm512_mask_blend_epi16(
-          k_8_11,
-          row_result,
-          _mm512_permutex2var_epi16(coef_8_9, p8_11, coef_10_11)
-        );
+      const __m512i coef_r6r7_0_31lo = _mm512_load_si512(current_coeff_SIMD + 6);
+      const __m512i coef_r6r7_0_31hi = _mm512_load_si512(current_coeff_SIMD + 7);
 
-        // Merge segment 12-15
-        row_result = _mm512_mask_blend_epi16(
-          k_12_15,
-          row_result,
-          _mm512_permutex2var_epi16(coef_12_13, p12_15, coef_14_15)
-        );
+      const __m512i coef_r8r9_0_31lo = _mm512_load_si512(current_coeff_SIMD + 8);
+      const __m512i coef_r8r9_0_31hi = _mm512_load_si512(current_coeff_SIMD + 9);
 
-        // Merge segment 16-19
-        row_result = _mm512_mask_blend_epi16(
-          k_16_19,
-          row_result,
-          _mm512_permutex2var_epi16(coef_16_17, p16_19, coef_18_19)
-        );
+      const __m512i coef_r10r11_0_31lo = _mm512_load_si512(current_coeff_SIMD + 10);
+      const __m512i coef_r10r11_0_31hi = _mm512_load_si512(current_coeff_SIMD + 11);
 
-        // Merge segment 20-23
-        row_result = _mm512_mask_blend_epi16(
-          k_20_23,
-          row_result,
-          _mm512_permutex2var_epi16(coef_20_21, p20_23, coef_22_23)
-        );
+      const __m512i coef_r12r13_0_31lo = _mm512_load_si512(current_coeff_SIMD + 12);
+      const __m512i coef_r12r13_0_31hi = _mm512_load_si512(current_coeff_SIMD + 13);
 
-        // Merge segment 24-27
-        row_result = _mm512_mask_blend_epi16(
-          k_24_27,
-          row_result,
-          _mm512_permutex2var_epi16(coef_24_25, p24_27, coef_26_27)
-        );
-
-        // Merge segment 28-31
-        row_result = _mm512_mask_blend_epi16(
-          k_28_31,
-          row_result,
-          _mm512_permutex2var_epi16(coef_28_29, p28_31, coef_30_31)
-        );
-      };
-
-      // Declare the coefficient row variables
-      __m512i coef_r0_0_31w, coef_r1_0_31w, coef_r2_0_31w, coef_r3_0_31w;
-      __m512i coef_r4_0_31w, coef_r5_0_31w, coef_r6_0_31w, coef_r7_0_31w;
-      __m512i coef_r8_0_31w, coef_r9_0_31w, coef_r10_0_31w, coef_r11_0_31w;
-      __m512i coef_r12_0_31w, coef_r13_0_31w, coef_r14_0_31w, coef_r15_0_31w;
-
-      // Process Row 0
-      make_coef_row(coef_r0_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 1
-      make_coef_row(coef_r1_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 2
-      make_coef_row(coef_r2_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 3
-      make_coef_row(coef_r3_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 4
-      make_coef_row(coef_r4_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 5
-      make_coef_row(coef_r5_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 6
-      make_coef_row(coef_r6_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 7
-      make_coef_row(coef_r7_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 8
-      make_coef_row(coef_r8_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 9
-      make_coef_row(coef_r9_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 10
-      make_coef_row(coef_r10_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 11
-      make_coef_row(coef_r11_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 12
-      make_coef_row(coef_r12_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 13
-      make_coef_row(coef_r13_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 14
-      make_coef_row(coef_r14_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      inc_perms(c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-
-      // Process Row 15
-      make_coef_row(coef_r15_0_31w, c_perm_0_3, c_perm_4_7, c_perm_8_11, c_perm_12_15, c_perm_16_19, c_perm_20_23, c_perm_24_27, c_perm_28_31);
-      // No inc_perms here
-
-      // convert-transpose to H-pairs for madd ? better to do with single permutex in future
-      // 16 to 16 512 registers - finally real working coeffs to store in the transposed resampling program for block of 64 target samples
-      __m512i coef_r0r1_0_31lo = _mm512_unpacklo_epi16(coef_r0_0_31w, coef_r1_0_31w);
-      __m512i coef_r0r1_0_31hi = _mm512_unpackhi_epi16(coef_r0_0_31w, coef_r1_0_31w);
-
-      __m512i coef_r2r3_0_31lo = _mm512_unpacklo_epi16(coef_r2_0_31w, coef_r3_0_31w);
-      __m512i coef_r2r3_0_31hi = _mm512_unpackhi_epi16(coef_r2_0_31w, coef_r3_0_31w);
-
-      __m512i coef_r4r5_0_31lo = _mm512_unpacklo_epi16(coef_r4_0_31w, coef_r5_0_31w);
-      __m512i coef_r4r5_0_31hi = _mm512_unpackhi_epi16(coef_r4_0_31w, coef_r5_0_31w);
-
-      __m512i coef_r6r7_0_31lo = _mm512_unpacklo_epi16(coef_r6_0_31w, coef_r7_0_31w);
-      __m512i coef_r6r7_0_31hi = _mm512_unpackhi_epi16(coef_r6_0_31w, coef_r7_0_31w);
-
-      __m512i coef_r8r9_0_31lo = _mm512_unpacklo_epi16(coef_r8_0_31w, coef_r9_0_31w);
-      __m512i coef_r8r9_0_31hi = _mm512_unpackhi_epi16(coef_r8_0_31w, coef_r9_0_31w);
-
-      __m512i coef_r10r11_0_31lo = _mm512_unpacklo_epi16(coef_r10_0_31w, coef_r11_0_31w);
-      __m512i coef_r10r11_0_31hi = _mm512_unpackhi_epi16(coef_r10_0_31w, coef_r11_0_31w);
-
-      __m512i coef_r12r13_0_31lo = _mm512_unpacklo_epi16(coef_r12_0_31w, coef_r13_0_31w);
-      __m512i coef_r12r13_0_31hi = _mm512_unpackhi_epi16(coef_r12_0_31w, coef_r13_0_31w);
-
-      __m512i coef_r14r15_0_31lo = _mm512_unpacklo_epi16(coef_r14_0_31w, coef_r15_0_31w);
-      __m512i coef_r14r15_0_31hi = _mm512_unpackhi_epi16(coef_r14_0_31w, coef_r15_0_31w);
-
-      // TODO: store transposed resampling program coeffs to temp buffer for reusage at each line
+      const __m512i coef_r14r15_0_31lo = _mm512_load_si512(current_coeff_SIMD + 14);
+      const __m512i coef_r14r15_0_31hi = _mm512_load_si512(current_coeff_SIMD + 15);
 
       // convert resampling program in H-form into permuting indexes for src transposition in V-form
       __m512i perm_0_0_15 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x])); // 16 offsets
@@ -7698,7 +6887,7 @@ void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16(BYTE* dst8, const BY
         src_ptr += src_pitch;
       }
 
-      current_coeff += filter_size * PIXELS_AT_A_TIME;
+      current_coeff_SIMD += 16;// in number of __m512i
     };
 
     // Process the 'safe zone' where direct full unaligned loads are acceptable.

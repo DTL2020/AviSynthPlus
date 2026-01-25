@@ -1726,6 +1726,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       if (program->filter_size_real <= 4) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 4/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
@@ -1746,6 +1747,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       if (program->filter_size_real <= 8) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 8/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
@@ -1764,6 +1766,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
         }
         if (!program->resize_h_planar_gather_permutex_vstripe_check(16/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 8/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
@@ -1777,7 +1780,6 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
               return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<true, false>;
             else
               return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<false, false>;
-
           }
         }
 
@@ -1785,6 +1787,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       if (program->filter_size_real <= 16) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 16/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 32/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
           {
             if (bits_per_pixel < 16)
@@ -1814,6 +1817,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       if (program->filter_size_real <= 4) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 4/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (bits_per_pixel < 16)
             return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4<true, false>;
           else
@@ -1823,6 +1827,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       if (program->filter_size_real <= 8) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 8/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (bits_per_pixel < 16)
             return resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8<true, false>;
           else
@@ -1830,6 +1835,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
         }
         if (!program->resize_h_planar_gather_permutex_vstripe_check(16/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 8/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (bits_per_pixel < 16)
             return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<true, false>;
           else
@@ -1839,6 +1845,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
       if (program->filter_size_real <= 16) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 16/*kernel_size*/))
         {
+          resize_prepare_coeffs_AVX512_H(program, env, 32/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
           if (bits_per_pixel < 16)
             return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<true, false>;
           else
