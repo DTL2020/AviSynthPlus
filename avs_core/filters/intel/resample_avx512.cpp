@@ -6560,7 +6560,6 @@ template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<true, f
 template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<false, true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<false, false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
-
 // filter size up to 16
 // 32 target uint16_t pixels at a time
 // 128-byte source loads (64 uint16_t pixels)
@@ -6908,6 +6907,313 @@ template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<true, true>
 template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<true, false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<false, true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<false, false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+
+// filter size up to 48 (?)
+// 64 target uint16_t pixels at a time in 4 groups of 16
+// 128-byte source loads (64 uint16_t pixels), 4 groups of 128 byte source loads for each 16 output samples, expect to support /2 downsize (used in ConvertTo42x with default bicubic too)
+// maximum permute index is 64 for _mm512_permutex2var_epi16 (uint16_t)
+// support VNNI and madd FMA
+// memory load of kernel samples
+// checker function is program->resize_h_planar_gather_permutex_vstripe_check(16/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, ks/*kernel_size*/))
+template<bool lessthan16bit, bool bVNNI>
+void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
+{
+  const int filter_size = program->filter_size; // aligned, practically the coeff table stride
+  int filter_size_real = program->filter_size_real; // aligned, practically the coeff table stride
+  // must be even
+  if ((filter_size_real / 2 * 2) != filter_size_real) filter_size_real++;// coeffs are padded with zeroes for odd filter_size_real
+
+  const uint16_t* src = (uint16_t*)src8;
+  uint16_t* AVS_RESTRICT dst = (uint16_t* AVS_RESTRICT)dst8;
+  dst_pitch = dst_pitch / sizeof(uint16_t);
+  src_pitch = src_pitch / sizeof(uint16_t);
+
+  constexpr int PIXELS_AT_A_TIME = 64;
+
+  // 'source_overread_beyond_targetx' indicates if the filter kernel can read beyond the target width.
+  // we load 4x32 source bytes at a time, so ensure safe overread if needed.
+  // Our main loop processes calculates for 64 target pixels at a time.
+  // Inside that, we load 128 source bytes (2x64) to be able to permutex from that.
+  // This we have to check at each mod-PIXELS_AT_A_TIME boundary, the allowance of 128-byte source load.
+  const int width_safe_mod = (program->safelimit_64_pixels_each32th_target.overread_possible ? program->safelimit_64_pixels_each32th_target.source_overread_beyond_targetx : width) / PIXELS_AT_A_TIME * PIXELS_AT_A_TIME;
+
+  // Preconditions:
+  assert(program->filter_size_real <= 48); // Coeffs limit expected 64(Accessible samples to group - 16(samples in group) = 48 
+
+  // 'target_size_alignment' ensures we can safely access coefficients using offsets like
+  // 'filter_size * 15' when processing 16 H pixels at a time
+  // 'filter_size * 63' when processing 64 H pixels at a time
+  assert(program->target_size_alignment >= 32); // Adjusted for 32 pixels (is it enough for uint16 ?)
+
+  assert(FRAME_ALIGN >= 64); // need some solution for 64 x16bit !
+
+  const int max_scanlines = program->max_scanlines;
+
+  // for 16 bits only
+  const __m512i shifttosigned = _mm512_set1_epi16(-32768);
+  const __m512i shiftfromsigned = _mm512_set1_epi32(32768 << FPScale16bits);
+
+  const int limit = (1 << bits_per_pixel) - 1;
+  // only used when template lessthan16bit is true
+  __m512i clamp_limit = _mm512_set1_epi16((short)limit); // clamp limit for <16 bits
+
+  __m512i rounder = _mm512_set1_epi32(1 << (FPScale16bits - 1));
+
+  // Vertical stripe loop for L2 cache optimization
+  for (int y_from = 0; y_from < height; y_from += max_scanlines)
+  {
+    int y_to = std::min(y_from + max_scanlines, height);
+
+    // Reset current_coeff for the start of the stripe (points to start of row's coeffs)
+    const __m512i* AVS_RESTRICT current_coeff_SIMD = (__m512i*)program->pixel_coefficient_AVX512_H;
+
+    int x = 0;
+
+    // Lambda to handle both safe (fast) and unsafe (masked/partial) loading paths
+    auto do_h_integer_core = [&](auto partial_load) {
+
+      __m512i one_epi16 = _mm512_set1_epi16(1);
+
+      // convert resampling program in H-form into permuting indexes for src transposition in V-form
+      __m512i perm_0_0_15 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x])); // 16 offsets
+      __m512i perm_0_16_31 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x + 16])); //  16 offsets
+
+      __m512i perm_0_32_47 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x + 32])); //  16 offsets
+      __m512i perm_0_48_63 = _mm512_loadu_si512((__m512i*)(&program->pixel_offset[x + 48])); //  16 offsets
+
+      int iStart_0_15 = program->pixel_offset[x];
+      __m512i m512i_Start_0_15 = _mm512_set1_epi32(iStart_0_15);
+
+      int iStart_16_31 = program->pixel_offset[x + 16];
+      __m512i m512i_Start_16_31 = _mm512_set1_epi32(iStart_16_31);
+
+      int iStart_32_47 = program->pixel_offset[x + 32];
+      __m512i m512i_Start_32_47 = _mm512_set1_epi32(iStart_32_47);
+
+      int iStart_48_63 = program->pixel_offset[x + 48];
+      __m512i m512i_Start_48_63 = _mm512_set1_epi32(iStart_48_63);
+
+      perm_0_0_15 = _mm512_sub_epi32(perm_0_0_15, m512i_Start_0_15);
+      perm_0_16_31 = _mm512_sub_epi32(perm_0_16_31, m512i_Start_16_31);
+
+      perm_0_32_47 = _mm512_sub_epi32(perm_0_32_47, m512i_Start_32_47);
+      perm_0_48_63 = _mm512_sub_epi32(perm_0_48_63, m512i_Start_48_63);
+
+      __m256i m256i_perm_0_0_15 = _mm512_cvtepi32_epi16(perm_0_0_15);
+      __m256i m256i_perm_0_16_31 = _mm512_cvtepi32_epi16(perm_0_16_31);
+
+      __m256i m256i_perm_0_32_47 = _mm512_cvtepi32_epi16(perm_0_32_47);
+      __m256i m256i_perm_0_48_63 = _mm512_cvtepi32_epi16(perm_0_48_63);
+
+      // Insert each 256-bit register into the specific lane
+      __m512i perm_0_0_31 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_0_15), m256i_perm_0_16_31, 1);
+      __m512i perm_0_32_63 = _mm512_inserti64x4(_mm512_zextsi256_si512(m256i_perm_0_32_47), m256i_perm_0_48_63, 1);
+
+      // Taps are contiguous (0, 1, 2, 3), so we increment perm indexes by 1.
+      __m512i perm_1_0_31 = _mm512_add_epi16(perm_0_0_31, one_epi16);
+      __m512i perm_1_32_63 = _mm512_add_epi16(perm_0_32_63, one_epi16);
+
+      const __m512i perm_r0r1_0_31lo = _mm512_unpacklo_epi16(perm_0_0_31, perm_1_0_31);
+      const __m512i perm_r0r1_0_31hi = _mm512_unpackhi_epi16(perm_0_0_31, perm_1_0_31);
+
+      const __m512i perm_r0r1_32_63lo = _mm512_unpacklo_epi16(perm_0_32_63, perm_1_32_63);
+      const __m512i perm_r0r1_32_63hi = _mm512_unpackhi_epi16(perm_0_32_63, perm_1_32_63);
+
+      // Taps are contiguous (0, 1, 2, 3), so we increment perm indexes by 1 (in pairs by 2 each).
+      const __m512i two_epi16 = _mm512_set1_epi16(2);
+
+      uint16_t* AVS_RESTRICT dst_ptr = dst + x + y_from * dst_pitch;
+      const uint16_t* src_ptr_0_15 = src + iStart_0_15 + y_from * src_pitch; // all permute offsets relative to this start offset
+      const uint16_t* src_ptr_16_31 = src + iStart_16_31 + y_from * src_pitch; // all permute offsets relative to this start offset
+      const uint16_t* src_ptr_32_47 = src + iStart_32_47 + y_from * src_pitch; // all permute offsets relative to this start offset
+      const uint16_t* src_ptr_48_63 = src + iStart_48_63 + y_from * src_pitch; // all permute offsets relative to this start offset
+
+      // Calculate remaining pixels for bounds checking in partial_load mode. 1..64 remaining uint16_t pixels possible.
+      // only when partial_load
+      const int remaining_0_15 = program->source_size - iStart_0_15;
+      // two masks for partial loads of 32 + 32 shorts
+      const __mmask32 k1_0_15 = _bzhi_u32(~0UL, remaining_0_15);
+      const __mmask32 k2_0_15 = _bzhi_u32(~0UL, remaining_0_15 - 32);
+
+      // only when partial_load
+      const int remaining_16_31 = program->source_size - iStart_16_31;
+      // two masks for partial loads of 32 + 32 shorts
+      const __mmask32 k1_16_31 = _bzhi_u32(~0UL, remaining_16_31);
+      const __mmask32 k2_16_31 = _bzhi_u32(~0UL, remaining_16_31 - 32);
+
+      // only when partial_load
+      const int remaining_32_47 = program->source_size - iStart_32_47;
+      // two masks for partial loads of 32 + 32 shorts
+      const __mmask32 k1_32_47 = _bzhi_u32(~0UL, remaining_32_47);
+      const __mmask32 k2_32_47 = _bzhi_u32(~0UL, remaining_32_47 - 32);
+
+      // only when partial_load
+      const int remaining_48_63 = program->source_size - iStart_48_63;
+      // two masks for partial loads of 32 + 32 shorts
+      const __mmask32 k1_48_63 = _bzhi_u32(~0UL, remaining_48_63);
+      const __mmask32 k2_48_63 = _bzhi_u32(~0UL, remaining_48_63 - 32);
+
+      // 64 target pixels into two groups: 0-31 and 32-63.
+      const __mmask32 k_high = _mm512_kunpackw(_mm512_int2mask(0xFFFF), _mm512_int2mask(0x0000)); // temp fix for VS2017 builds
+
+      for (int y = y_from; y < y_to; y++)
+      {
+/*        // DEBUG
+          uint16_t* ptr_d = const_cast<uint16_t*>(src);
+              for (int i = 0; i < 255; i++)
+              ptr_d[i] = (uint16_t)i;*/
+        
+        __m512i data_src_0_15, data_src2_0_15;
+        __m512i data_src_16_31, data_src2_16_31;
+        __m512i data_src_32_47, data_src2_32_47;
+        __m512i data_src_48_63, data_src2_48_63;
+
+        // working permute indexes for advancing to save number of registers used
+        __m512i perm_rNrNp1_0_31lo = perm_r0r1_0_31lo;
+        __m512i perm_rNrNp1_0_31hi = perm_r0r1_0_31hi;
+
+        __m512i perm_rNrNp1_32_63lo = perm_r0r1_32_63lo;
+        __m512i perm_rNrNp1_32_63hi = perm_r0r1_32_63hi;
+
+        if constexpr (partial_load) {
+          // Safe masked loads for the image edge 2x32 shorts
+          data_src_0_15 = _mm512_maskz_loadu_epi16(k1_0_15, src_ptr_0_15);
+          data_src_16_31 = _mm512_maskz_loadu_epi16(k1_16_31, src_ptr_16_31);
+          data_src_32_47 = _mm512_maskz_loadu_epi16(k1_32_47, src_ptr_32_47);
+          data_src_48_63 = _mm512_maskz_loadu_epi16(k1_48_63, src_ptr_48_63);
+
+          // Safe masked loads for the image edge 2x32 shorts
+          data_src2_0_15 = _mm512_maskz_loadu_epi16(k2_0_15, src_ptr_0_15 + 32);
+          data_src2_16_31 = _mm512_maskz_loadu_epi16(k2_16_31, src_ptr_16_31 + 32);
+          data_src2_32_47 = _mm512_maskz_loadu_epi16(k2_32_47, src_ptr_32_47 + 32);
+          data_src2_48_63 = _mm512_maskz_loadu_epi16(k2_48_63, src_ptr_48_63 + 32);
+        }
+        else {
+          // Fast unaligned loads for the safe zone
+          data_src_0_15 = _mm512_loadu_si512(src_ptr_0_15);
+          data_src_16_31 = _mm512_loadu_si512(src_ptr_16_31);
+          data_src_32_47 = _mm512_loadu_si512(src_ptr_32_47);
+          data_src_48_63 = _mm512_loadu_si512(src_ptr_48_63);
+
+          // Fast unaligned loads for the safe zone
+          data_src2_0_15 = _mm512_loadu_si512(src_ptr_0_15 + 32);
+          data_src2_16_31 = _mm512_loadu_si512(src_ptr_16_31 + 32);
+          data_src2_32_47 = _mm512_loadu_si512(src_ptr_32_47 + 32);
+          data_src2_48_63 = _mm512_loadu_si512(src_ptr_48_63 + 32);
+        }
+
+        __m512i result_0_31lo = rounder;
+        __m512i result_0_31hi = rounder;
+        __m512i result_32_63lo = rounder;
+        __m512i result_32_63hi = rounder;
+
+        const __m512i* current_coeff_SIMDw = current_coeff_SIMD;
+
+        for (int kr = 0; kr < filter_size_real; kr += 2)
+        {
+          __m512i src_r0r1_0_31lo = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(data_src_0_15, perm_rNrNp1_0_31lo, data_src2_0_15), _mm512_permutex2var_epi16(data_src_16_31, perm_rNrNp1_0_31lo, data_src2_16_31));
+          __m512i src_r0r1_0_31hi = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(data_src_0_15, perm_rNrNp1_0_31hi, data_src2_0_15), _mm512_permutex2var_epi16(data_src_16_31, perm_rNrNp1_0_31hi, data_src2_16_31));
+
+          __m512i src_r0r1_32_63lo = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(data_src_32_47, perm_rNrNp1_32_63lo, data_src2_32_47), _mm512_permutex2var_epi16(data_src_48_63, perm_rNrNp1_32_63lo, data_src2_48_63));
+          __m512i src_r0r1_32_63hi = _mm512_mask_blend_epi16(k_high, _mm512_permutex2var_epi16(data_src_32_47, perm_rNrNp1_32_63hi, data_src2_32_47), _mm512_permutex2var_epi16(data_src_48_63, perm_rNrNp1_32_63hi, data_src2_48_63));
+
+          // for next r2r3
+          perm_rNrNp1_0_31lo = _mm512_add_epi16(perm_rNrNp1_0_31lo, two_epi16);
+          perm_rNrNp1_0_31hi = _mm512_add_epi16(perm_rNrNp1_0_31hi, two_epi16);
+
+          perm_rNrNp1_32_63lo = _mm512_add_epi16(perm_rNrNp1_32_63lo, two_epi16);
+          perm_rNrNp1_32_63hi = _mm512_add_epi16(perm_rNrNp1_32_63hi, two_epi16);
+
+
+          if (!lessthan16bit) {
+            // madd requires signed integers, so shift to signed range
+            src_r0r1_0_31lo = _mm512_add_epi16(src_r0r1_0_31lo, shifttosigned);
+            src_r0r1_0_31hi = _mm512_add_epi16(src_r0r1_0_31hi, shifttosigned);
+            src_r0r1_32_63lo = _mm512_add_epi16(src_r0r1_32_63lo, shifttosigned);
+            src_r0r1_32_63hi = _mm512_add_epi16(src_r0r1_32_63hi, shifttosigned);
+          }
+
+          if (bVNNI)
+          {
+            result_0_31lo = _mm512_dpwssd_epi32(result_0_31lo, src_r0r1_0_31lo, _mm512_load_si512(current_coeff_SIMDw + 0));
+            result_0_31hi = _mm512_dpwssd_epi32(result_0_31hi, src_r0r1_0_31hi, _mm512_load_si512(current_coeff_SIMDw + 1));
+            result_32_63lo = _mm512_dpwssd_epi32(result_32_63lo, src_r0r1_32_63lo, _mm512_load_si512(current_coeff_SIMDw + 2));
+            result_32_63hi = _mm512_dpwssd_epi32(result_32_63hi, src_r0r1_32_63hi, _mm512_load_si512(current_coeff_SIMDw + 3));
+          }
+          else
+          {
+            // making FMA in 32bits accs as in AVX256 V-resize
+            result_0_31lo = _mm512_add_epi32(_mm512_madd_epi16(src_r0r1_0_31lo, _mm512_load_si512(current_coeff_SIMDw + 0)), result_0_31lo);
+            result_0_31hi = _mm512_add_epi32(_mm512_madd_epi16(src_r0r1_0_31hi, _mm512_load_si512(current_coeff_SIMDw + 1)), result_0_31hi);
+
+            result_32_63lo = _mm512_add_epi32(_mm512_madd_epi16(src_r0r1_32_63lo, _mm512_load_si512(current_coeff_SIMDw + 2)), result_0_31lo);
+            result_32_63hi = _mm512_add_epi32(_mm512_madd_epi16(src_r0r1_32_63hi, _mm512_load_si512(current_coeff_SIMDw + 3)), result_0_31hi);
+          }
+
+          current_coeff_SIMDw += 4;
+        }
+
+        if (!lessthan16bit) {
+          // return from signed range
+          result_0_31lo = _mm512_add_epi32(result_0_31lo, shiftfromsigned);
+          result_0_31hi = _mm512_add_epi32(result_0_31hi, shiftfromsigned);
+
+          result_32_63lo = _mm512_add_epi32(result_32_63lo, shiftfromsigned);
+          result_32_63hi = _mm512_add_epi32(result_32_63hi, shiftfromsigned);
+        }
+
+        // scale down
+        result_0_31lo = _mm512_srai_epi32(result_0_31lo, FPScale16bits);
+        result_0_31hi = _mm512_srai_epi32(result_0_31hi, FPScale16bits);
+
+        result_32_63lo = _mm512_srai_epi32(result_32_63lo, FPScale16bits);
+        result_32_63hi = _mm512_srai_epi32(result_32_63hi, FPScale16bits);
+
+        // negative and over 16 bit values are clamped automatically
+        __m512i result_0_31_int16 = _mm512_packus_epi32(result_0_31lo, result_0_31hi);
+        __m512i result_32_63_int16 = _mm512_packus_epi32(result_32_63lo, result_32_63hi);
+
+        if (lessthan16bit) {
+          result_0_31_int16 = _mm512_min_epu16(result_0_31_int16, clamp_limit); // extra clamp for 10-14 bit
+          result_32_63_int16 = _mm512_min_epu16(result_32_63_int16, clamp_limit); // extra clamp for 10-14 bit
+        }
+
+        _mm512_stream_si512(reinterpret_cast<__m512i*>(dst_ptr), result_0_31_int16);
+
+        // temporal solution
+        const int w_mod32 = width / 32 * 32;
+        if (x < (w_mod32 - 32))
+          _mm512_stream_si512(reinterpret_cast<__m512i*>(dst_ptr + 32), result_32_63_int16);// may overwrite end of row - need skip if not mod32 uint16 ?
+
+        dst_ptr += dst_pitch;
+        src_ptr_0_15 += src_pitch;
+        src_ptr_16_31 += src_pitch;
+        src_ptr_32_47 += src_pitch;
+        src_ptr_48_63 += src_pitch;
+      }
+
+      current_coeff_SIMD += filter_size_real * 2; // internal function const in number of __m512i
+    };
+
+    // Process the 'safe zone' where direct full unaligned loads are acceptable.
+    for (; x < width_safe_mod; x += PIXELS_AT_A_TIME)
+    {
+      do_h_integer_core(std::false_type{});
+    }
+
+    // Process the potentially 'unsafe zone' near the image edge, using safe masked loading.
+    for (; x < width; x += PIXELS_AT_A_TIME)
+    {
+      do_h_integer_core(std::true_type{});
+    }
+  }
+}
+
+template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<true, true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<true, false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<false, true>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+template void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<false, false>(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+
 
 void resize_prepare_coeffs_AVX512_H(ResamplingProgram* p, IScriptEnvironment* env, int iSamplesInTheGroup, int iGroupsCount) {
   // note: filter_size_real was the max(kernel_sizes[])

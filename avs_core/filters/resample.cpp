@@ -1782,7 +1782,6 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
               return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8<false, false>;
           }
         }
-
       }
       if (program->filter_size_real <= 16) {
         if (!program->resize_h_planar_gather_permutex_vstripe_check(32/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, 16/*kernel_size*/))
@@ -1803,6 +1802,25 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
               return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<false, false>;
 
           }
+        }
+      }
+      // some generic memory-based for big kernel sizes (up to 48 ?) and some downsize (not best in performance for upsize but one for many)
+      if (!program->resize_h_planar_gather_permutex_vstripe_check(16/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, program->filter_size_real/*kernel_size*/))
+      {
+        resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
+        if (((env->GetCPUFlagsEx() & CPUF_AVX512VNNI) == CPUF_AVX512VNNI))
+        {
+          if (bits_per_pixel < 16)
+            return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<true, true>;
+          else
+            return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<false, true>;
+        }
+        else
+        {
+          if (bits_per_pixel < 16)
+            return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<true, false>;
+          else
+            return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<false, false>;
         }
       }
     }
@@ -1851,6 +1869,15 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
           else
             return resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks16<false, false>;
         }
+      }
+      // some generic memory-based for big kernel sizes (up to 48 ?) and some downsize (not best in performance for upsize but one for many)
+      if (!program->resize_h_planar_gather_permutex_vstripe_check(16/*iSamplesInTheGroup*/, 64/*permutex_index_diff_limit*/, program->filter_size_real/*kernel_size*/))
+      {
+        resize_prepare_coeffs_AVX512_H(program, env, 64/*iSamplesInTheGroup*/, 1/*iGroupsCount*/);
+        if (bits_per_pixel < 16)
+          return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<true, false>;
+        else
+          return resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48<false, false>;
       }
     }
 #endif
