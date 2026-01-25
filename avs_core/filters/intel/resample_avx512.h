@@ -59,24 +59,18 @@ void resize_h_planar_uint8_avx512_permutex_vstripe_2s32_ks8(BYTE* dst8, const BY
 template<bool bVNNI>
 void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks16(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
+template<bool bVNNI>
+void resize_h_planar_uint8_avx512_permutex_vstripe_2s32_ks64(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+
+template<bool bVNNI>
+void resize_h_planar_uint8_avx512_permutex_vstripe_mpz_2s32_ks64(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
+
 // 16bit samples
-template<bool lessthan16bit>
-void resize_h_planar_uint16_avx512_permutex_vstripe_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-
-template<bool lessthan16bit, bool bVNNI>
-void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-
 template<bool lessthan16bit, bool bVNNI>
 void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
 template<bool lessthan16bit, bool bVNNI>
-void resize_h_planar_uint16_avx512_permutex_vstripe_mp_ks8(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-
-template<bool lessthan16bit, bool bVNNI>
 void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks8(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
-
-template<bool lessthan16bit, bool bVNNI>
-void resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s16_ks8(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
 
 template<bool lessthan16bit, bool bVNNI>
 void resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks8(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel);
