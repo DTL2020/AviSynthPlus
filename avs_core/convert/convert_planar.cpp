@@ -914,10 +914,11 @@ PVideoFrame __stdcall ConvertYUV444ToRGB::GetFrame(int n, IScriptEnvironment* en
         srcU += src_pitch_uv;
         srcV += src_pitch_uv;
     }
-  } else if(pixel_step < 0) // -1: RGBP  -2:RGBAP
+  }
+  else if (pixel_step < 0) // -1: RGBP  -2:RGBAP
   {
-      // YUV444 -> PlanarRGB
-      // YUVA444 -> PlanarRGBA
+    // YUV444 -> PlanarRGB
+    // YUVA444 -> PlanarRGBA
     bool targetHasAlpha = pixel_step == -2;
 
     BYTE *dstpG = dst->GetWritePtr(PLANAR_G);
@@ -931,8 +932,8 @@ PVideoFrame __stdcall ConvertYUV444ToRGB::GetFrame(int n, IScriptEnvironment* en
       int heightA = dst->GetHeight(PLANAR_A);
       int rowsizeA = dst->GetRowSize(PLANAR_A);
       int dst_pitchA = dst->GetPitch(PLANAR_A);
-        // simple copy
-      if(src->GetRowSize(PLANAR_A)) // vi.IsYUVA() no-no! vi is already the target video type
+      // simple copy
+      if (src->GetRowSize(PLANAR_A)) // vi.IsYUVA() no-no! vi is already the target video type
         env->BitBlt(dstpA, dst_pitchA, src->GetReadPtr(PLANAR_A), src->GetPitch(PLANAR_A), src->GetRowSize(PLANAR_A_ALIGNED), src->GetHeight(PLANAR_A));
       else {
         // fill default transparency
@@ -956,12 +957,12 @@ PVideoFrame __stdcall ConvertYUV444ToRGB::GetFrame(int n, IScriptEnvironment* en
     int dst_pitchR = dst->GetPitch(PLANAR_R);
     int dst_pitchA = dst->GetPitch(PLANAR_A);
 
-    int pixelsize = vi.ComponentSize();;
+    int pixelsize = vi.ComponentSize();
     int bits_per_pixel = vi.BitsPerComponent();
     int src_bits_per_pixel = bits_per_pixel;
     if (pixel_step == -3)
     {
-      VideoInfo vi_src= child->GetVideoInfo();
+      VideoInfo vi_src = child->GetVideoInfo();
       src_bits_per_pixel = vi_src.BitsPerComponent();
     }
 
@@ -973,18 +974,22 @@ PVideoFrame __stdcall ConvertYUV444ToRGB::GetFrame(int n, IScriptEnvironment* en
     int dstPitch[3] = { dst_pitchG, dst_pitchB, dst_pitchR };
 
     // convert to RGBPS
-    if (src_bits_per_pixel < 16 && (env->GetCPUFlags() & CPUF_AVX2) && (pixel_step == -3))
+    if (pixel_step == -3)
     {
-      switch (src_bits_per_pixel) {
-      case 8: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint8_t, 8>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
-      case 10: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 10>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
-      case 12: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 12>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
-      case 14: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 14>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+      if ((src_bits_per_pixel <= 16) && (env->GetCPUFlags() & CPUF_AVX2))
+      {
+        switch (src_bits_per_pixel) {
+        case 8: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint8_t, 8>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+        case 10: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 10>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+        case 12: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 12>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+        case 14: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 14>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+        case 16: convert_yuv_to_planarrgb_uint16_tops_avx2(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+        }
+        return dst;
       }
-      return dst;
+      else
+        env->ThrowError("ConvertToRGBPS->ConvertYUV444ToRGBPS: No compatible SIMD architecture. Need AVX2. Or bits >16");
     }
-    else
-      env->ThrowError("ConvertToRGBPS->ConvertYUV444ToRGBPS: No compatible SIMD architecture. Need AVX2");
 
     if (bits_per_pixel < 16 && (env->GetCPUFlags() & CPUF_AVX2))
     {

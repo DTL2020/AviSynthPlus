@@ -75,4 +75,10 @@ __attribute__((__target__("avx2")))
 void convert_yuv_to_planarrgb_uint16_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m);
 
 
+#if defined(GCC) || defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
+void convert_yuv_to_planarrgb_uint16_tops_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m);
+
+
 #endif

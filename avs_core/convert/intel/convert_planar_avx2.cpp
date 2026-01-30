@@ -596,11 +596,6 @@ void convert_yuv_to_planarrgb_uint8_14_tops_avx2(BYTE *(&dstp)[3], int(&dstPitch
       __m256i y, u, v;
       __m256i y_2, u_2, v_2;
 
-/*      //DEBUG
-      uint16_t* pdst = (uint16_t*)(const_cast<uint8_t*>(srcp[0]));
-      for (int i = 0; i < 255; i++)
-        pdst[i] = (uint16_t)i;*/
-
       if constexpr (sizeof(pixel_t) == 1) {
         __m256i y_32 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[0] + x));
         __m256i u_32 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[1] + x));
@@ -1038,6 +1033,169 @@ void convert_yuv_to_planarrgb_uint16_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], c
 //instantiate
 //template<int bits_per_pixel>
 template void convert_yuv_to_planarrgb_uint16_avx2<16>(BYTE* (&dstp)[3], int(&dstPitch)[3], const BYTE* (&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix& m);
+
+#if defined(GCC) || defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
+void convert_yuv_to_planarrgb_uint16_tops_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m)
+{
+  float* dstp0 = (float*)dstp[0];
+  float* dstp1 = (float*)dstp[1];
+  float* dstp2 = (float*)dstp[2];
+  int dstpitch0 = dstPitch[0] / sizeof(float);
+  int dstpitch1 = dstPitch[1] / sizeof(float);
+  int dstpitch2 = dstPitch[2] / sizeof(float);
+
+  // 16 bit uint16_t (unsigned range)
+  const __m256  half_f = _mm256_set1_ps((float)(1u << (16 - 1))); // 16 bit chroma has shift
+  const __m256i limit = _mm256_set1_epi16((short)((1 << 16) - 1)); // 255
+  const __m256  offset_f = _mm256_set1_ps(m.offset_y_f);
+  const __m256  offset_rgb = _mm256_set1_ps(m.offset_rgb_f);
+
+  const __m256 mat_yG = _mm256_set1_ps(m.y_g_f);
+  const __m256 mat_uG = _mm256_set1_ps(m.u_g_f);
+  const __m256 mat_vG = _mm256_set1_ps(m.v_g_f);
+
+  const __m256 mat_yB = _mm256_set1_ps(m.y_b_f);
+  const __m256 mat_uB = _mm256_set1_ps(m.u_b_f);
+  const __m256 mat_vB = _mm256_set1_ps(m.v_b_f);
+
+  const __m256 mat_yR = _mm256_set1_ps(m.y_r_f);
+  const __m256 mat_uR = _mm256_set1_ps(m.u_r_f);
+  const __m256 mat_vR = _mm256_set1_ps(m.v_r_f);
+
+  const bool has_offset_rgb = 0 != m.offset_rgb_f;
+
+  // convert to float32
+  bits_conv_constants d;
+
+  // void get_bits_conv_constants(bits_conv_constants& d, bool use_chroma, bool fulls, bool fulld, int srcBitDepth, int dstBitDepth)
+  get_bits_conv_constants(d, false, true, true, 16, 32); // fulls=fulld=true (default for RGB ?)
+
+  const __m256 m256_src_offset_ps = _mm256_set1_ps((float)(d.src_offset_i));// not used for  fulls=fulld=true (default for RGB ?)
+  const __m256 m256_mul_factor = _mm256_set1_ps(d.mul_factor); 
+  const __m256 m256_dst_offset = _mm256_set1_ps(d.dst_offset); // not used with  fulls=fulld=true (default for RGB ?)
+
+  const int rowsize = width * sizeof(uint16_t);
+
+  for (int yy = 0; yy < height; yy++) {
+    int x_ps = 0;
+    //    for (int x = 0; x < rowsize; x += 4 * sizeof(uint16_t)) {
+    for (int x = 0; x < rowsize; x += 16 * sizeof(uint16_t)) {
+      __m256 resG, resG_2;
+      __m256 resB, resB_2;
+      __m256 resR, resR_2;
+
+      __m256 y, u, v;
+      __m256 y_2, u_2, v_2;
+
+      // uint16_t: load 32 bytes: 16 pixels
+      __m256i yi_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[0] + x));
+      __m256i ui_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[1] + x));
+      __m256i vi_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[2] + x));
+
+      y = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm256_castsi256_si128(yi_16)));
+      u = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm256_castsi256_si128(ui_16)));
+      v = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm256_castsi256_si128(vi_16)));
+
+      y_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm256_extracti128_si256(yi_16, 1)));
+      u_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm256_extracti128_si256(ui_16, 1)));
+      v_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm256_extracti128_si256(vi_16, 1)));
+
+      y = _mm256_add_ps(y, offset_f); // offset is negative
+      u = _mm256_sub_ps(u, half_f);
+      v = _mm256_sub_ps(v, half_f);
+
+      y_2 = _mm256_add_ps(y_2, offset_f); // offset is negative
+      u_2 = _mm256_sub_ps(u_2, half_f);
+      v_2 = _mm256_sub_ps(v_2, half_f);
+
+      // *G*
+      resG = _mm256_mul_ps(y, mat_yG); // mul_y
+      resG = _mm256_fmadd_ps(u, mat_uG, resG); // mul_u
+      resG = _mm256_fmadd_ps(v, mat_vG, resG); // mul_v
+      if (has_offset_rgb)
+        resG = _mm256_add_ps(resG, offset_rgb);
+
+      resG_2 = _mm256_mul_ps(y_2, mat_yG); // mul_y
+      resG_2 = _mm256_fmadd_ps(u_2, mat_uG, resG_2); // mul_u
+      resG_2 = _mm256_fmadd_ps(v_2, mat_vG, resG_2); // mul_v
+      if (has_offset_rgb)
+        resG_2 = _mm256_add_ps(resG_2, offset_rgb);
+
+      // are we need it for narrow->narrow (or no range mapping change ?) 
+/*    resG = _mm256_sub_ps(resG, m256_src_offset_ps); // offset is 2^13 scaled to keep precision better
+      resG_2 = _mm256_sub_ps(resG_2, m256_src_offset_ps);*/
+
+      /*    resG = _mm256_fmadd_ps(resG, m256_mul_factor, m256_dst_offset);
+            resG_2 = _mm256_fmadd_ps(resG_2, m256_mul_factor, m256_dst_offset);*/
+      resG = _mm256_mul_ps(resG, m256_mul_factor);
+      resG_2 = _mm256_mul_ps(resG_2, m256_mul_factor);
+
+      _mm256_store_ps((dstp0 + x_ps + 0), resG);
+      _mm256_store_ps((dstp0 + x_ps + 8), resG_2);
+
+      // *B*
+      resB = _mm256_mul_ps(y, mat_yB); // mul_y
+      resB = _mm256_fmadd_ps(u, mat_uB, resB); // mul_u
+      resB = _mm256_fmadd_ps(v, mat_vB, resB); // mul_v
+      if (has_offset_rgb)
+        resB = _mm256_add_ps(resB, offset_rgb);
+
+      resB_2 = _mm256_mul_ps(y_2, mat_yB); // mul_y
+      resB_2 = _mm256_fmadd_ps(u_2, mat_uB, resB_2); // mul_u
+      resB_2 = _mm256_fmadd_ps(v_2, mat_vB, resB_2); // mul_v
+      if (has_offset_rgb)
+        resB_2 = _mm256_add_ps(resB_2, offset_rgb);
+
+      // are we need it for narrow->narrow (or no range mapping change ?) 
+/*    resB = _mm256_sub_ps(resB, m256_src_offset_ps); // offset is 2^13 scaled to keep precision better
+      resB_2 = _mm256_sub_ps(resB_2, m256_src_offset_ps);*/
+
+      /*    resB = _mm256_fmadd_ps(resB, m256_mul_factor, m256_dst_offset);
+            resB_2 = _mm256_fmadd_ps(resB_2, m256_mul_factor, m256_dst_offset);*/
+      resB = _mm256_mul_ps(resB, m256_mul_factor);
+      resB_2 = _mm256_mul_ps(resB_2, m256_mul_factor);
+
+      _mm256_store_ps((dstp1 + x_ps + 0), resB);
+      _mm256_store_ps((dstp1 + x_ps + 8), resB_2);
+
+      // *R*
+      resR = _mm256_mul_ps(y, mat_yR); // mul_y
+      resR = _mm256_fmadd_ps(u, mat_uR, resR); // mul_u
+      resR = _mm256_fmadd_ps(v, mat_vR, resR); // mul_v
+      if (has_offset_rgb)
+        resR = _mm256_add_ps(resR, offset_rgb);
+
+      resR_2 = _mm256_mul_ps(y_2, mat_yR); // mul_y
+      resR_2 = _mm256_fmadd_ps(u_2, mat_uR, resR_2); // mul_u
+      resR_2 = _mm256_fmadd_ps(v_2, mat_vR, resR_2); // mul_v
+      if (has_offset_rgb)
+        resR_2 = _mm256_add_ps(resR_2, offset_rgb);
+
+      // are we need it for narrow->narrow (or no range mapping change ?) 
+/*    resR = _mm256_sub_ps(resR, m256_src_offset_ps); // offset is 2^13 scaled to keep precision better
+      resR_2 = _mm256_sub_ps(resR_2, m256_src_offset_ps);*/
+
+      /*    resR = _mm256_fmadd_ps(resR, m256_mul_factor, m256_dst_offset);
+            resR_2 = _mm256_fmadd_ps(resR_2, m256_mul_factor, m256_dst_offset);*/
+      resR = _mm256_mul_ps(resR, m256_mul_factor);
+      resR_2 = _mm256_mul_ps(resR_2, m256_mul_factor);
+
+      _mm256_store_ps((dstp2 + x_ps + 0), resR);
+      _mm256_store_ps((dstp2 + x_ps + 8), resR_2);
+
+      x_ps += 16;
+    }
+    srcp[0] += srcPitch[0];
+    srcp[1] += srcPitch[1];
+    srcp[2] += srcPitch[2];
+    dstp0 += dstpitch0;
+    dstp1 += dstpitch1;
+    dstp2 += dstpitch2;
+  }
+}
+
 
 #ifdef _MSC_VER
 #pragma warning(pop)
