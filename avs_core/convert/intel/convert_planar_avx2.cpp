@@ -36,11 +36,12 @@
 
 
 #include <avs/alignment.h>
-#ifdef AVS_WINDOWS
+#ifdef _MSC_VER
     #include <intrin.h>
 #else
     #include <x86intrin.h>
 #endif
+#include <immintrin.h>
 
 #include "convert_planar_avx2.h"
 
@@ -356,6 +357,397 @@ template void convert_planarrgb_to_yuv_uint16_avx2<10>(BYTE* (&dstp)[3], int(&ds
 template void convert_planarrgb_to_yuv_uint16_avx2<12>(BYTE* (&dstp)[3], int(&dstPitch)[3], const BYTE* (&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix& m);
 template void convert_planarrgb_to_yuv_uint16_avx2<14>(BYTE* (&dstp)[3], int(&dstPitch)[3], const BYTE* (&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix& m);
 template void convert_planarrgb_to_yuv_uint16_avx2<16>(BYTE* (&dstp)[3], int(&dstPitch)[3], const BYTE* (&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix& m);
+
+template<typename pixel_t, int bits_per_pixel>
+#if defined(GCC) || defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
+void convert_yuv_to_planarrgb_uint8_14_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m)
+{
+  // 8 bit        uint8_t
+  // 10,12,14 bit uint16_t (signed range)
+  const __m256i half = _mm256_set1_epi16((short)(1 << (bits_per_pixel - 1)));  // 128
+  const __m256i limit = _mm256_set1_epi16((short)((1 << bits_per_pixel) - 1)); // 255
+  const __m256i offset = _mm256_set1_epi16((short)(m.offset_y));
+
+  // to be able to use it as signed 16 bit in madd; 4096+(16<<13) would not fit into i16
+  // multiplier is 4096 instead of 1:
+  // original   : 1      * 4096
+  // needed     : 1      * (4096 + offset_rgb<<13)  (4096 + 131072 overflows i16)
+  // changed to : 4096   * (1 + offset_rgb>>(13-1)
+  const int round_scale = 4096; // 1 << 12
+  const int round_mask_plus_rgb_offset_scaled_i = (4096 + (m.offset_rgb << 13)) / round_scale;
+  const __m256i m256i_round_scale = _mm256_set1_epi16(round_scale);
+
+  __m256i zero = _mm256_setzero_si256();
+
+  const __m256i m_uy_G = _mm256_set1_epi32(int((static_cast<uint16_t>(m.y_g) << 16) | static_cast<uint16_t>(m.u_g))); // y and u
+  const __m256i m_vR_G = _mm256_set1_epi32(int((static_cast<uint16_t>(round_mask_plus_rgb_offset_scaled_i) << 16) | static_cast<uint16_t>(m.v_g))); // rounding 13 bit >> 1 and v
+
+  const __m256i m_uy_B = _mm256_set1_epi32(int((static_cast<uint16_t>(m.y_b) << 16) | static_cast<uint16_t>(m.u_b))); // y and u
+  const __m256i m_vR_B = _mm256_set1_epi32(int((static_cast<uint16_t>(round_mask_plus_rgb_offset_scaled_i) << 16) | static_cast<uint16_t>(m.v_b))); // rounding 13 bit >> 1 and v
+
+  const __m256i m_uy_R = _mm256_set1_epi32(int((static_cast<uint16_t>(m.y_r) << 16) | static_cast<uint16_t>(m.u_r))); // y and u
+  const __m256i m_vR_R = _mm256_set1_epi32(int((static_cast<uint16_t>(round_mask_plus_rgb_offset_scaled_i) << 16) | static_cast<uint16_t>(m.v_r))); // rounding 13 bit >> 1 and v
+
+  const int rowsize = width * sizeof(pixel_t);
+  for (int yy = 0; yy < height; yy++) {
+    // if not mod16 then still no trouble, process non-visible pixels, we have 32 byte aligned in avs+
+//    for (int x = 0; x < rowsize; x += 8 * sizeof(pixel_t)) {
+    for (int x = 0; x < rowsize; x += 32 * sizeof(pixel_t)) { // rows are 64bytes aligned for AVX512 ?
+      __m256i y, u, v;
+      __m256i y_2, u_2, v_2;
+
+      if constexpr (sizeof(pixel_t) == 1) {
+        __m256i y_32 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[0] + x));
+        __m256i u_32 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[1] + x));
+        __m256i v_32 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[2] + x));
+        y = _mm256_unpacklo_epi8(y_32, zero);
+        y_2 = _mm256_unpackhi_epi8(y_32, zero);
+
+        u = _mm256_unpacklo_epi8(u_32, zero);
+        u_2 = _mm256_unpackhi_epi8(u_32, zero);
+
+        v = _mm256_unpacklo_epi8(v_32, zero);
+        v_2 = _mm256_unpackhi_epi8(v_32, zero);
+
+      }
+      else { // uint16_t pixels, 14 bits OK, but 16 bit pixels are unsigned, cannot madd
+        y = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[0] + x));
+        u = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[1] + x));
+        v = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[2] + x));
+        y_2 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[0] + x + 32));
+        u_2 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[1] + x + 32));
+        v_2 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[2] + x + 32));
+      }
+
+      y = _mm256_adds_epi16(y, offset); // offset is negative
+      u = _mm256_subs_epi16(u, half);
+      v = _mm256_subs_epi16(v, half);
+
+      y_2 = _mm256_adds_epi16(y_2, offset); // offset is negative
+      u_2 = _mm256_subs_epi16(u_2, half);
+      v_2 = _mm256_subs_epi16(v_2, half);
+
+      /*
+      // int b = (((int64_t)matrix.y_b * Y + (int64_t)matrix.u_b * U + (int64_t)matrix.v_b * V + 4096)>>13);
+      // int g = (((int64_t)matrix.y_g * Y + (int64_t)matrix.u_g * U + (int64_t)matrix.v_g * V + 4096)>>13);
+      // int r = (((int64_t)matrix.y_r * Y + (int64_t)matrix.u_r * U + (int64_t)matrix.v_r * V + 4096)>>13);
+      */
+      // Need1:  (m.y_b   m.u_b )     (m.y_b   m.u_b)     (m.y_b   m.u_b)     (m.y_b   m.u_b)   8x16 bit
+      //         (  y3      u3  )     (  y2      u2 )     (  y1      u1 )     (   y0     u0 )   8x16 bit
+      // res1=  (y_b*y3 + u_b*u3)   ...                                                         4x32 bit
+      // Need2:  (m.v_b   round')     (m.y_b   round')     (m.y_b   round')     (m.y_b   round')
+      //         (  v3     4096 )     (  v2     4096 )     (  v1     4096 )     (  v0     4096 )
+      // res2=  (yv_b*v3 + round' )  ...  round' = round + rgb_offset
+
+      // *G* ----------------
+      const __m256i uy0123 = _mm256_unpacklo_epi16(u, y);
+      const __m256i xv0123 = _mm256_unpacklo_epi16(v, m256i_round_scale);
+
+      const __m256i uy0123_2 = _mm256_unpacklo_epi16(u_2, y_2);
+      const __m256i xv0123_2 = _mm256_unpacklo_epi16(v_2, m256i_round_scale);
+
+      const __m256i uy4567 = _mm256_unpackhi_epi16(u, y);
+      const __m256i xv4567 = _mm256_unpackhi_epi16(v, m256i_round_scale);
+
+      const __m256i uy4567_2 = _mm256_unpackhi_epi16(u_2, y_2);
+      const __m256i xv4567_2 = _mm256_unpackhi_epi16(v_2, m256i_round_scale);
+
+//      const __m256i uy0123 = _mm256_unpacklo_epi16(u, y);
+//      res1_lo = _mm256_madd_epi16(m_uy_G, uy0123);
+//      const __m256i xv0123 = _mm256_unpacklo_epi16(v, m256i_round_scale);
+//      res2_lo = _mm256_madd_epi16(m_vR_G, xv0123);
+//      __m256i g_lo = _mm256_srai_epi32(_mm256_add_epi32(res1, res2), 13);
+      __m256i g_lo = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_G, uy0123), _mm256_madd_epi16(m_vR_G, xv0123)), 13);
+      __m256i g_lo_2 = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_G, uy0123_2), _mm256_madd_epi16(m_vR_G, xv0123_2)), 13);
+
+      __m256i g_hi = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_G, uy4567), _mm256_madd_epi16(m_vR_G, xv4567)), 13);
+      __m256i g_hi_2 = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_G, uy4567_2), _mm256_madd_epi16(m_vR_G, xv4567_2)), 13);
+
+      __m256i g = _mm256_packs_epi32(g_lo, g_hi); // 2x4x32 -> 2x4xuint16_t
+      __m256i g_2 = _mm256_packs_epi32(g_lo_2, g_hi_2); // 2x4x32 -> 2x4xuint16_t
+      if constexpr (sizeof(pixel_t) == 1) {
+        g = _mm256_packus_epi16(g, g_2);   // 32x uint16_t -> 32x uint_8
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[0] + x), g);
+      }
+      else {
+        g = _mm256_max_epi16(_mm256_min_epi16(g, limit), zero); // clamp 10,12,14 bit
+        g_2 = _mm256_max_epi16(_mm256_min_epi16(g_2, limit), zero); // clamp 10,12,14 bit
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[0] + x), g);
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[0] + x + 32), g_2);
+      }
+
+      // *B* ----------------
+      __m256i b_lo = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_B, uy0123), _mm256_madd_epi16(m_vR_B, xv0123)), 13);
+      __m256i b_lo_2 = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_B, uy0123_2), _mm256_madd_epi16(m_vR_B, xv0123_2)), 13);
+
+      __m256i b_hi = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_B, uy4567), _mm256_madd_epi16(m_vR_B, xv4567)), 13);
+      __m256i b_hi_2 = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_B, uy4567_2), _mm256_madd_epi16(m_vR_B, xv4567_2)), 13);
+
+      __m256i b = _mm256_packs_epi32(b_lo, b_hi); // 2x4x32 -> 2x4xuint16_t
+      __m256i b_2 = _mm256_packs_epi32(b_lo_2, b_hi_2); // 2x4x32 -> 2x4xuint16_t
+
+      if constexpr (sizeof(pixel_t) == 1) {
+        b = _mm256_packus_epi16(b, b_2);   // 32x uint16_t -> 32x uint_8
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[1] + x), b);
+      }
+      else {
+        b = _mm256_max_epi16(_mm256_min_epi16(b, limit), zero); // clamp 10,12,14 bit
+        b_2 = _mm256_max_epi16(_mm256_min_epi16(b_2, limit), zero); // clamp 10,12,14 bit
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[1] + x), b);
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[1] + x + 32), b_2);
+      }
+
+      // *R* ----------------
+      __m256i r_lo = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_R, uy0123), _mm256_madd_epi16(m_vR_R, xv0123)), 13);
+      __m256i r_lo_2 = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_R, uy0123_2), _mm256_madd_epi16(m_vR_R, xv0123_2)), 13);
+
+      __m256i r_hi = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_R, uy4567), _mm256_madd_epi16(m_vR_R, xv4567)), 13);
+      __m256i r_hi_2 = _mm256_srai_epi32(_mm256_add_epi32(_mm256_madd_epi16(m_uy_R, uy4567_2), _mm256_madd_epi16(m_vR_R, xv4567_2)), 13);
+
+      __m256i r = _mm256_packs_epi32(r_lo, r_hi); // 2x4x32 -> 2x4xuint16_t
+      __m256i r_2 = _mm256_packs_epi32(r_lo_2, r_hi_2); // 2x4x32 -> 2x4xuint16_t
+
+      if constexpr (sizeof(pixel_t) == 1) {
+        r = _mm256_packus_epi16(r, r_2);   // 32x uint16_t -> 32x uint_8
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[2] + x), r);
+      }
+      else {
+        r = _mm256_max_epi16(_mm256_min_epi16(r, limit), zero); // clamp 10,12,14 bit
+        r_2 = _mm256_max_epi16(_mm256_min_epi16(r_2, limit), zero); // clamp 10,12,14 bit
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[2] + x), r);
+        _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[2] + x + 32), r_2);
+      }
+
+    }
+    srcp[0] += srcPitch[0];
+    srcp[1] += srcPitch[1];
+    srcp[2] += srcPitch[2];
+    dstp[0] += dstPitch[0];
+    dstp[1] += dstPitch[1];
+    dstp[2] += dstPitch[2];
+  }
+}
+
+//instantiate
+//template<typename pixel_t, int bits_per_pixel>
+template void convert_yuv_to_planarrgb_uint8_14_avx2<uint8_t, 8>(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m);
+template void convert_yuv_to_planarrgb_uint8_14_avx2<uint16_t, 10>(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m);
+template void convert_yuv_to_planarrgb_uint8_14_avx2<uint16_t, 12>(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m);
+template void convert_yuv_to_planarrgb_uint8_14_avx2<uint16_t, 14>(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m);
+
+#if defined(GCC) || defined(CLANG)
+__attribute__((__target__("avx2"))) // FMA too
+#endif
+void convert_yuv_to_planarrgb_float_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m)
+{
+  // 32 bit float
+  __m256  offset_f = _mm256_set1_ps(m.offset_y_f);
+  __m256  offset_rgb = _mm256_set1_ps(m.offset_rgb_f);
+
+  const bool has_offset_rgb = 0 != m.offset_rgb_f;
+
+  const __m256 mat_yG = _mm256_set1_ps(m.y_g_f);
+  const __m256 mat_uG = _mm256_set1_ps(m.u_g_f);
+  const __m256 mat_vG = _mm256_set1_ps(m.v_g_f);
+
+  const __m256 mat_yB = _mm256_set1_ps(m.y_b_f);
+  const __m256 mat_uB = _mm256_set1_ps(m.u_b_f);
+  const __m256 mat_vB = _mm256_set1_ps(m.v_b_f);
+
+  const __m256 mat_yR = _mm256_set1_ps(m.y_r_f);
+  const __m256 mat_uR = _mm256_set1_ps(m.u_r_f);
+  const __m256 mat_vR = _mm256_set1_ps(m.v_r_f);
+
+  const int rowsize = width * sizeof(float);
+  for (int yy = 0; yy < height; yy++) {
+//    for (int x = 0; x < rowsize; x += 4 * sizeof(float)) {
+    for (int x = 0; x < rowsize; x += 8 * sizeof(float)) { // may be unroll to 16 or compiler will do it ?
+      __m256 resG, resB, resR;
+      __m256 y, u, v;
+
+      // float: load 32 bytes: 8 pixels
+      y = _mm256_load_ps(reinterpret_cast<const float *>(srcp[0] + x));
+      u = _mm256_load_ps(reinterpret_cast<const float *>(srcp[1] + x));
+      v = _mm256_load_ps(reinterpret_cast<const float *>(srcp[2] + x));
+      y = _mm256_add_ps(y, offset_f); // offset is negative*/
+
+      // *G*
+      resG = _mm256_mul_ps(y, mat_yG); // mul_y
+      resG = _mm256_fmadd_ps(u, mat_uG, resG); // mul_u
+      resG = _mm256_fmadd_ps(v, mat_vG, resG); // mul_v
+      if (has_offset_rgb)
+        resG = _mm256_add_ps(resG, offset_rgb);
+      // no clamp
+      _mm256_store_ps(reinterpret_cast<float *>(dstp[0] + x), resG);
+      // *B*
+      resB = _mm256_mul_ps(y, mat_yB); // mul_y
+      resB = _mm256_fmadd_ps(u, mat_uB, resB); // mul_u
+      resB = _mm256_fmadd_ps(v, mat_vB, resB); // mul_v
+      if (has_offset_rgb)
+        resB = _mm256_add_ps(resB, offset_rgb);
+      // no clamp
+      _mm256_store_ps(reinterpret_cast<float *>(dstp[1] + x), resB);
+      // *R*
+      resR = _mm256_mul_ps(y, mat_yR); // mul_y
+      resR = _mm256_fmadd_ps(u, mat_uR, resR); // mul_u
+      resR = _mm256_fmadd_ps(v, mat_vR, resR); // mul_v
+      if (has_offset_rgb)
+        resR = _mm256_add_ps(resR, offset_rgb);
+      // no clamp
+      _mm256_store_ps(reinterpret_cast<float *>(dstp[2] + x), resR);
+    }
+    srcp[0] += srcPitch[0];
+    srcp[1] += srcPitch[1];
+    srcp[2] += srcPitch[2];
+    dstp[0] += dstPitch[0];
+    dstp[1] += dstPitch[1];
+    dstp[2] += dstPitch[2];
+  }
+}
+
+template<int bits_per_pixel>
+#if defined(GCC) || defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
+void convert_yuv_to_planarrgb_uint16_avx2(BYTE *(&dstp)[3], int(&dstPitch)[3], const BYTE *(&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix &m)
+{
+  // 16 bit uint16_t (unsigned range)
+  const __m256  half_f = _mm256_set1_ps((float)(1u << (bits_per_pixel - 1))); // 8-16 bit chroma has shift
+  const __m256i limit = _mm256_set1_epi16((short)((1 << bits_per_pixel) - 1)); // 255
+  const __m256  offset_f = _mm256_set1_ps(m.offset_y_f);
+  const __m256  offset_rgb = _mm256_set1_ps(m.offset_rgb_f);
+
+  const __m256 mat_yG = _mm256_set1_ps(m.y_g_f);
+  const __m256 mat_uG = _mm256_set1_ps(m.u_g_f);
+  const __m256 mat_vG = _mm256_set1_ps(m.v_g_f);
+
+  const __m256 mat_yB = _mm256_set1_ps(m.y_b_f);
+  const __m256 mat_uB = _mm256_set1_ps(m.u_b_f);
+  const __m256 mat_vB = _mm256_set1_ps(m.v_b_f);
+
+  const __m256 mat_yR = _mm256_set1_ps(m.y_r_f);
+  const __m256 mat_uR = _mm256_set1_ps(m.u_r_f);
+  const __m256 mat_vR = _mm256_set1_ps(m.v_r_f);
+
+  const bool has_offset_rgb = 0 != m.offset_rgb_f;
+
+  const __m256i zero = _mm256_setzero_si256();
+
+  const int rowsize = width * sizeof(uint16_t);
+  for (int yy = 0; yy < height; yy++) {
+//    for (int x = 0; x < rowsize; x += 4 * sizeof(uint16_t)) {
+    for (int x = 0; x < rowsize; x += 16 * sizeof(uint16_t)) {
+      __m256 resG, resG_2;
+      __m256i resiG, resiG_2;
+
+      __m256 resB, resB_2;
+      __m256i resiB, resiB_2;
+
+      __m256 resR, resR_2;
+      __m256i resiR, resiR_2;
+
+      __m256 y, u, v;
+      __m256 y_2, u_2, v_2;
+
+      // uint16_t: load 32 bytes: 16 pixels
+      __m256i yi_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[0] + x));
+      __m256i ui_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[1] + x));
+      __m256i vi_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp[2] + x));
+
+      y = _mm256_cvtepi32_ps(_mm256_unpacklo_epi16(yi_16, zero));
+      u = _mm256_cvtepi32_ps(_mm256_unpacklo_epi16(ui_16, zero));
+      v = _mm256_cvtepi32_ps(_mm256_unpacklo_epi16(vi_16, zero));
+
+      y_2 = _mm256_cvtepi32_ps(_mm256_unpackhi_epi16(yi_16, zero));
+      u_2 = _mm256_cvtepi32_ps(_mm256_unpackhi_epi16(ui_16, zero));
+      v_2 = _mm256_cvtepi32_ps(_mm256_unpackhi_epi16(vi_16, zero));
+
+      y = _mm256_add_ps(y, offset_f); // offset is negative
+      u = _mm256_sub_ps(u, half_f);
+      v = _mm256_sub_ps(v, half_f);
+
+      y_2 = _mm256_add_ps(y_2, offset_f); // offset is negative
+      u_2 = _mm256_sub_ps(u_2, half_f);
+      v_2 = _mm256_sub_ps(v_2, half_f);
+
+      // *G*
+      resG = _mm256_mul_ps(y, mat_yG); // mul_y
+      resG = _mm256_fmadd_ps(u, mat_uG, resG); // mul_u
+      resG = _mm256_fmadd_ps(v, mat_vG, resG); // mul_v
+      if (has_offset_rgb)
+        resG = _mm256_add_ps(resG, offset_rgb);
+
+      resG_2 = _mm256_mul_ps(y_2, mat_yG); // mul_y
+      resG_2 = _mm256_fmadd_ps(u_2, mat_uG, resG_2); // mul_u
+      resG_2 = _mm256_fmadd_ps(v_2, mat_vG, resG_2); // mul_v
+      if (has_offset_rgb)
+        resG_2 = _mm256_add_ps(resG_2, offset_rgb);
+
+      resiG = _mm256_cvtps_epi32(resG); // no extra rounding, cvtps rounds to nearest
+      resiG_2 = _mm256_cvtps_epi32(resG_2); // no extra rounding, cvtps rounds to nearest
+
+      resiG = _mm256_packus_epi32(resiG, resiG_2);
+      if constexpr (bits_per_pixel < 16) // albeit 10-14 bit have another function, make this general
+        resiG = _mm256_min_epi16(resiG, limit); // clamp 10,12,14 bit
+      _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[0] + x), resiG);
+
+      // *B*
+      resB = _mm256_mul_ps(y, mat_yB); // mul_y
+      resB = _mm256_fmadd_ps(u, mat_uB, resB); // mul_u
+      resB = _mm256_fmadd_ps(v, mat_vB, resB); // mul_v
+      if (has_offset_rgb)
+        resB = _mm256_add_ps(resB, offset_rgb);
+
+      resB_2 = _mm256_mul_ps(y_2, mat_yB); // mul_y
+      resB_2 = _mm256_fmadd_ps(u_2, mat_uB, resB_2); // mul_u
+      resB_2 = _mm256_fmadd_ps(v_2, mat_vB, resB_2); // mul_v
+      if (has_offset_rgb)
+        resB_2 = _mm256_add_ps(resB_2, offset_rgb);
+
+      resiB = _mm256_cvtps_epi32(resB); // no extra rounding, cvtps rounds to nearest
+      resiB_2 = _mm256_cvtps_epi32(resB_2); // no extra rounding, cvtps rounds to nearest
+
+      resiB = _mm256_packus_epi32(resiB, resiB_2);
+      if constexpr (bits_per_pixel < 16) // albeit 10-14 bit have another function, make this general
+        resiB = _mm256_min_epi16(resiB, limit); // clamp 10,12,14 bit
+      _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[1] + x), resiB);
+
+      // *R*
+      resR = _mm256_mul_ps(y, mat_yR); // mul_y
+      resR = _mm256_fmadd_ps(u, mat_uR, resR); // mul_u
+      resR = _mm256_fmadd_ps(v, mat_vR, resR); // mul_v
+      if (has_offset_rgb)
+        resR = _mm256_add_ps(resR, offset_rgb);
+
+      resR_2 = _mm256_mul_ps(y_2, mat_yR); // mul_y
+      resR_2 = _mm256_fmadd_ps(u_2, mat_uR, resR_2); // mul_u
+      resR_2 = _mm256_fmadd_ps(v_2, mat_vR, resR_2); // mul_v
+      if (has_offset_rgb)
+        resR_2 = _mm256_add_ps(resR_2, offset_rgb);
+
+      resiR = _mm256_cvtps_epi32(resR); // no extra rounding, cvtps rounds to nearest
+      resiR_2 = _mm256_cvtps_epi32(resR_2); // no extra rounding, cvtps rounds to nearest
+
+      resiR = _mm256_packus_epi32(resiR, resiR_2);
+      if constexpr (bits_per_pixel < 16) // albeit 10-14 bit have another function, make this general
+        resiR = _mm256_min_epi16(resiR, limit); // clamp 10,12,14 bit
+      _mm256_store_si256(reinterpret_cast<__m256i *>(dstp[2] + x), resiR);
+
+    }
+    srcp[0] += srcPitch[0];
+    srcp[1] += srcPitch[1];
+    srcp[2] += srcPitch[2];
+    dstp[0] += dstPitch[0];
+    dstp[1] += dstPitch[1];
+    dstp[2] += dstPitch[2];
+  }
+}
+
+//instantiate
+//template<int bits_per_pixel>
+template void convert_yuv_to_planarrgb_uint16_avx2<16>(BYTE* (&dstp)[3], int(&dstPitch)[3], const BYTE* (&srcp)[3], const int(&srcPitch)[3], int width, int height, const ConversionMatrix& m);
 
 #ifdef _MSC_VER
 #pragma warning(pop)
