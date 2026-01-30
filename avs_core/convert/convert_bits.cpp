@@ -838,7 +838,7 @@ static void get_convert_float_to_float_functions(bool fulls, bool fulld,
 }
 
 static void get_convert_uintN_to_float_functions(int bits_per_pixel, bool fulls, bool fulld,
-  BitDepthConvFuncPtr& conv_function, BitDepthConvFuncPtr& conv_function_chroma, BitDepthConvFuncPtr& conv_function_a)
+  BitDepthConvFuncPtr& conv_function, BitDepthConvFuncPtr& conv_function_chroma, BitDepthConvFuncPtr& conv_function_a, IScriptEnvironment* env)
 {
   // 8-16bit->32bits support fulls fulld, alpha is always full-full
 #define convert_uintN_to_float_functions(uint_X_t) \
@@ -859,14 +859,50 @@ static void get_convert_uintN_to_float_functions(int bits_per_pixel, bool fulls,
         conv_function = convert_uintN_to_float_c<uint_X_t, false, false, false>; \
         conv_function_chroma = convert_uintN_to_float_c<uint_X_t, true, false, false>; \
       }
+
+#define convert_uintN_to_float_functions_avx2(uint_X_t) \
+      conv_function_a = convert_uintN_to_float_avx2<uint_X_t, false, true, true>; /* full-full */ \
+      if (fulls && fulld) { \
+        conv_function = convert_uintN_to_float_avx2<uint_X_t, false, true, true>; \
+        conv_function_chroma = convert_uintN_to_float_avx2<uint_X_t, true, true, true>; \
+      } \
+      else if (fulls && !fulld) { \
+        conv_function = convert_uintN_to_float_avx2<uint_X_t, false, true, false>; \
+        conv_function_chroma = convert_uintN_to_float_avx2<uint_X_t, true, true, false>; \
+      } \
+      else if (!fulls && fulld) { \
+        conv_function = convert_uintN_to_float_avx2<uint_X_t, false, false, true>; \
+        conv_function_chroma = convert_uintN_to_float_avx2<uint_X_t, true, false, true>; \
+      } \
+      else if (!fulls && !fulld) { \
+        conv_function = convert_uintN_to_float_avx2<uint_X_t, false, false, false>; \
+        conv_function_chroma = convert_uintN_to_float_avx2<uint_X_t, true, false, false>; \
+      }
+
   switch (bits_per_pixel) {
-  case 8: 
+  case 8:
     convert_uintN_to_float_functions(uint8_t);
     break;
   default: // 10-16 bits
     convert_uintN_to_float_functions(uint16_t);
     break;
   }
+
+#ifdef INTEL_INTRINSICS
+  if ((env->GetCPUFlags() & CPUF_AVX2))
+  {
+    switch (bits_per_pixel) {
+    case 8:
+      convert_uintN_to_float_functions_avx2(uint8_t);
+      break;
+    default: // 10-16 bits
+      convert_uintN_to_float_functions_avx2(uint16_t);
+      break;
+    }
+  }
+#endif 
+
+
 #undef convert_uintN_to_float_functions
 }
 
@@ -1133,7 +1169,7 @@ ConvertBits::ConvertBits(PClip _child, const int _dither_mode, const int _target
   // 8-32->32
   if (target_bitdepth == 32) {
     if (bits_per_pixel <= 16) // 8-16->32 bit
-      get_convert_uintN_to_float_functions(bits_per_pixel, fulls, fulld, conv_function, conv_function_chroma, conv_function_a);
+      get_convert_uintN_to_float_functions(bits_per_pixel, fulls, fulld, conv_function, conv_function_chroma, conv_function_a, env);
     else
       get_convert_float_to_float_functions(fulls, fulld, conv_function, conv_function_chroma, conv_function_a);
   }

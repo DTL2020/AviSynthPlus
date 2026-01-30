@@ -744,3 +744,101 @@ convert_ordered_dither_uint_sse4_functions(uint16_t, uint16_t)
 
 #undef convert_ordered_dither_uint_sse4_functions
 
+template<typename pixel_t, bool chroma, bool fulls, bool fulld>
+void convert_uintN_to_float_avx2(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth)
+{
+  const pixel_t *srcp0 = reinterpret_cast<const pixel_t *>(srcp);
+  float *dstp0 = reinterpret_cast<float *>(dstp);
+
+  src_pitch = src_pitch / sizeof(pixel_t);
+  dst_pitch = dst_pitch / sizeof(float);
+
+  const int src_width = src_rowsize / sizeof(pixel_t);
+
+  //-----------------------
+  bits_conv_constants d;
+  get_bits_conv_constants(d, chroma, fulls, fulld, source_bitdepth, target_bitdepth);
+
+  const __m256i m256_src_offset_epi32 = _mm256_set1_epi32(d.src_offset_i);
+  const __m256 m256_mul_factor = _mm256_set1_ps(d.mul_factor);
+  const __m256 m256_dst_offset = _mm256_set1_ps(d.dst_offset);
+
+  for (int y = 0; y < src_height; y++)
+  {
+    for (int x = 0; x < src_width; x+=32) // process by 32 integers of 8bit, rows are 64 bytes aligned
+    {
+      __m256i src_0_32, src_1_32, src_2_32, src_3_32;
+
+      if constexpr (sizeof(pixel_t) == 1) // uint8_t
+      {
+        __m256i src_32 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp0 + x));
+        // unpack to 4x64bits
+        __m256i src_0 = _mm256_permute4x64_epi64(src_32, 0);
+        __m256i src_1 = _mm256_permute4x64_epi64(src_32, 1);
+        __m256i src_2 = _mm256_permute4x64_epi64(src_32, 2);
+        __m256i src_3 = _mm256_permute4x64_epi64(src_32, 3);
+
+        src_0_32 = _mm256_cvtepu8_epi32(_mm256_castsi256_si128(src_0));
+        src_1_32 = _mm256_cvtepu8_epi32(_mm256_castsi256_si128(src_1));
+        src_2_32 = _mm256_cvtepu8_epi32(_mm256_castsi256_si128(src_2));
+        src_3_32 = _mm256_cvtepu8_epi32(_mm256_castsi256_si128(src_3));
+      }
+
+      if constexpr (sizeof(pixel_t) == 2) // uint16_t
+      {
+        __m256i src_16 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp0 + x));
+        __m256i src_16_2 = _mm256_load_si256(reinterpret_cast<const __m256i *>(srcp0 + x + 16));
+        // unpack to 2x128bits  2x8 uint16
+        src_0_32 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(src_16));
+        src_1_32 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(src_16, 1));
+        src_2_32 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(src_16_2));
+        src_3_32 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(src_16_2, 1));
+      }
+
+      src_0_32 = _mm256_sub_epi32(src_0_32, m256_src_offset_epi32);
+      src_1_32 = _mm256_sub_epi32(src_1_32, m256_src_offset_epi32);
+      src_2_32 = _mm256_sub_epi32(src_2_32, m256_src_offset_epi32);
+      src_3_32 = _mm256_sub_epi32(src_3_32, m256_src_offset_epi32);
+
+      __m256 src_0_ps = _mm256_cvtepi32_ps(src_0_32);
+      __m256 src_1_ps = _mm256_cvtepi32_ps(src_1_32);
+      __m256 src_2_ps = _mm256_cvtepi32_ps(src_2_32);
+      __m256 src_3_ps = _mm256_cvtepi32_ps(src_3_32);
+
+      __m256 out_0_ps = _mm256_fmadd_ps(src_0_ps, m256_mul_factor, m256_dst_offset);
+      __m256 out_1_ps = _mm256_fmadd_ps(src_1_ps, m256_mul_factor, m256_dst_offset);
+      __m256 out_2_ps = _mm256_fmadd_ps(src_2_ps, m256_mul_factor, m256_dst_offset);
+      __m256 out_3_ps = _mm256_fmadd_ps(src_3_ps, m256_mul_factor, m256_dst_offset);
+
+      _mm256_store_ps((dstp0 + x + 0), out_0_ps);
+      _mm256_store_ps((dstp0 + x + 8), out_1_ps);
+      _mm256_store_ps((dstp0 + x + 16), out_2_ps);
+      _mm256_store_ps((dstp0 + x + 24), out_3_ps);
+
+//        const float pixel = (srcp0[x] - d.src_offset_i) * d.mul_factor + d.dst_offset;
+//        dstp0[x] = pixel; // no clamp
+    }
+    dstp0 += dst_pitch;
+    srcp0 += src_pitch;
+  }
+
+}
+
+// instantinate
+template void convert_uintN_to_float_avx2<uint8_t, false, false, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, false, false, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, false, true, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, false, true, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, true, false, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, true, false, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, true, true, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint8_t, true, true, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+
+template void convert_uintN_to_float_avx2<uint16_t, false, false, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, false, false, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, false, true, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, false, true, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, true, false, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, true, false, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, true, true, false>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
+template void convert_uintN_to_float_avx2<uint16_t, true, true, true>(const BYTE *srcp, BYTE *dstp, int src_rowsize, int src_height, int src_pitch, int dst_pitch, int source_bitdepth, int target_bitdepth, int dither_target_bitdepth);
