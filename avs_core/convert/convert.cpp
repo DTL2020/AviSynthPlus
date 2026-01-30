@@ -71,6 +71,7 @@ extern const AVSFunction Convert_filters[] = {       // matrix can be "rec601", 
   { "ConvertToRGB64", BUILTIN_FUNC_PREFIX, "c[matrix]s[interlaced]b[ChromaInPlacement]s[chromaresample]s[param1]f[param2]f[param3]f", ConvertToRGB::Create, (void *)64 },
   { "ConvertToPlanarRGB",  BUILTIN_FUNC_PREFIX, "c[matrix]s[interlaced]b[ChromaInPlacement]s[chromaresample]s[param1]f[param2]f[param3]f", ConvertToRGB::Create, (void *)-1 },
   { "ConvertToPlanarRGBA", BUILTIN_FUNC_PREFIX, "c[matrix]s[interlaced]b[ChromaInPlacement]s[chromaresample]s[param1]f[param2]f[param3]f", ConvertToRGB::Create, (void *)-2 },
+  { "ConvertToPlanarRGBPS", BUILTIN_FUNC_PREFIX, "c[matrix]s[interlaced]b[ChromaInPlacement]s[chromaresample]s[param1]f[param2]f[param3]f", ConvertToRGB::Create, (void *)-3 },
   { "ConvertToY8",    BUILTIN_FUNC_PREFIX, "c[matrix]s", ConvertToY::Create, (void*)0 }, // user_data == 0 -> only 8 bit sources
   { "ConvertToYV12",  BUILTIN_FUNC_PREFIX, "c[interlaced]b[matrix]s[ChromaInPlacement]s[chromaresample]s[ChromaOutPlacement]s[param1]f[param2]f[param3]f", ConvertToYV12::Create, (void*)0 },
   { "ConvertToYV24",  BUILTIN_FUNC_PREFIX, "c[interlaced]b[matrix]s[ChromaInPlacement]s[chromaresample]s[param1]f[param2]f[param3]f", ConvertToPlanarGeneric::CreateYUV444, (void*)0},
@@ -239,7 +240,7 @@ AVSValue __cdecl ConvertToRGB::Create(AVSValue args, void* user_data, IScriptEnv
 
   // common Create for all CreateRGB24/32/48/64/Planar(RGBP:-1, RGPAP:-2) using user_data
   int target_rgbtype = (int)reinterpret_cast<intptr_t>(user_data);
-  // -1,-2: Planar RGB(A)
+  // -1,-2: Planar RGB(A), -3: Planar RGBPS
   //  0: not specified (leave if input is packed RGB, convert to rgb32/64 input colorspace dependent)
   // 24,32,48,64: RGB24/32/48/64
 
@@ -273,8 +274,8 @@ AVSValue __cdecl ConvertToRGB::Create(AVSValue args, void* user_data, IScriptEnv
     bool reallyConvert = true;
     switch (target_rgbtype)
     {
-    case -1: case -2:
-        rgbtype_param = target_rgbtype; break; // planar RGB(A)
+    case -1: case -2: case -3:
+        rgbtype_param = target_rgbtype; break; // planar RGB(A) or RGBPS
     case 0:
         rgbtype_param = vi.ComponentSize() == 1 ? 4 : 8; break; // input bitdepth adaptive
     case 24:
@@ -317,6 +318,11 @@ AVSValue __cdecl ConvertToRGB::Create(AVSValue args, void* user_data, IScriptEnv
         clip = new PlanarRGBtoPackedRGB(clip, isRGBA);
         vi = clip->GetVideoInfo();
       }
+
+      // change output format to PS for -3:
+      if (target_rgbtype == -3)
+        vi.pixel_type = VideoInfo::CS_RGBPS;
+
       return clip;
     }
   }

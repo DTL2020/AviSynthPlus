@@ -730,25 +730,28 @@ ConvertYUV444ToRGB::ConvertYUV444ToRGB(PClip src, const char *matrix_name, int _
 
   switch (pixel_step)
   {
-  case -1: case -2:
-    switch (vi.BitsPerComponent())
-    {
-    case 8:  vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP : VideoInfo::CS_RGBP; break;
-    case 10: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP10 : VideoInfo::CS_RGBP10; break;
-    case 12: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP12 : VideoInfo::CS_RGBP12; break;
-    case 14: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP14 : VideoInfo::CS_RGBP14; break;
-    case 16: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP16 : VideoInfo::CS_RGBP16; break;
-    case 32: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAPS : VideoInfo::CS_RGBPS; break;
+    case -3:
+      vi.pixel_type = VideoInfo::CS_RGBPS; break;
+
+    case -1: case -2:
+      switch (vi.BitsPerComponent())
+      {
+      case 8:  vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP : VideoInfo::CS_RGBP; break;
+      case 10: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP10 : VideoInfo::CS_RGBP10; break;
+      case 12: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP12 : VideoInfo::CS_RGBP12; break;
+      case 14: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP14 : VideoInfo::CS_RGBP14; break;
+      case 16: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAP16 : VideoInfo::CS_RGBP16; break;
+      case 32: vi.pixel_type = pixel_step == -2 ? VideoInfo::CS_RGBAPS : VideoInfo::CS_RGBPS; break;
+      default:
+        env->ThrowError("ConvertYUV444ToRGB: invalid vi.BitsPerComponent(): %d", vi.BitsPerComponent());
+      }
+      break;
+    case 3: vi.pixel_type = VideoInfo::CS_BGR24; break;
+    case 4: vi.pixel_type = VideoInfo::CS_BGR32; break;
+    case 6: vi.pixel_type = VideoInfo::CS_BGR48; break;
+    case 8: vi.pixel_type = VideoInfo::CS_BGR64; break;
     default:
-      env->ThrowError("ConvertYUV444ToRGB: invalid vi.BitsPerComponent(): %d", vi.BitsPerComponent());
-    }
-    break;
-  case 3: vi.pixel_type = VideoInfo::CS_BGR24; break;
-  case 4: vi.pixel_type = VideoInfo::CS_BGR32; break;
-  case 6: vi.pixel_type = VideoInfo::CS_BGR48; break;
-  case 8: vi.pixel_type = VideoInfo::CS_BGR64; break;
-  default:
-    env->ThrowError("ConvertYUV444ToRGB: invalid pixel step: %d", pixel_step);
+      env->ThrowError("ConvertYUV444ToRGB: invalid pixel step: %d", pixel_step);
   }
 
 }
@@ -953,8 +956,14 @@ PVideoFrame __stdcall ConvertYUV444ToRGB::GetFrame(int n, IScriptEnvironment* en
     int dst_pitchR = dst->GetPitch(PLANAR_R);
     int dst_pitchA = dst->GetPitch(PLANAR_A);
 
-    int pixelsize = vi.ComponentSize();
+    int pixelsize = vi.ComponentSize();;
     int bits_per_pixel = vi.BitsPerComponent();
+    int src_bits_per_pixel = bits_per_pixel;
+    if (pixel_step == -3)
+    {
+      VideoInfo vi_src= child->GetVideoInfo();
+      src_bits_per_pixel = vi_src.BitsPerComponent();
+    }
 
 #ifdef INTEL_INTRINSICS
     const BYTE* srcp[3] = { src->GetReadPtr(PLANAR_Y), src->GetReadPtr(PLANAR_U), src->GetReadPtr(PLANAR_V) };
@@ -962,6 +971,20 @@ PVideoFrame __stdcall ConvertYUV444ToRGB::GetFrame(int n, IScriptEnvironment* en
 
     BYTE* dstp[3] = { dstpG, dstpB, dstpR };
     int dstPitch[3] = { dst_pitchG, dst_pitchB, dst_pitchR };
+
+    // convert to RGBPS
+    if (src_bits_per_pixel < 16 && (env->GetCPUFlags() & CPUF_AVX2) && (pixel_step == -3))
+    {
+      switch (src_bits_per_pixel) {
+      case 8: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint8_t, 8>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+      case 10: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 10>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+      case 12: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 12>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+      case 14: convert_yuv_to_planarrgb_uint8_14_tops_avx2<uint16_t, 14>(dstp, dstPitch, srcp, srcPitch, vi.width, vi.height, matrix); break;
+      }
+      return dst;
+    }
+    else
+      env->ThrowError("ConvertToRGBPS->ConvertYUV444ToRGBPS: No compatible SIMD architecture. Need AVX2");
 
     if (bits_per_pixel < 16 && (env->GetCPUFlags() & CPUF_AVX2))
     {
