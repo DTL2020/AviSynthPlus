@@ -1977,7 +1977,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
     if (CPU & CPUF_AVX2) {
       // up to 4 coeffs it can be highly optimized with transposes, gather/permutex choice
       // These perform very poorly in Prefetch, so we provide alternative generic version for MT
-      out_resampler_h_alternative_for_mt = resize_h_planar_float_avx2_permutex_vstripe_ks4; // jolly joker
+      out_resampler_h_alternative_for_mt = resize_h_planar_float_avx2_permutex_vstripe_m_ks4; // meander + prefetch + half max_scanline
       if (program->filter_size_real <= 4) {
         if (program->resize_h_planar_gather_permutex_vstripe_check(8 /*iSamplesInTheGroup*/, 8 /*permutex_index_diff_limit*/, 4 /*kernel_size*/)) {
       switch (program->filter_size_real) {
@@ -1987,7 +1987,7 @@ ResamplerH FilteredResizeH::GetResampler(int CPU, int pixelsize, int bits_per_pi
           case 4: return resize_h_planar_float_avx2_transpose_vstripe_ks4<0>; break;
           }
         }
-        return resize_h_planar_float_avx2_permutex_vstripe_ks4;
+       return resize_h_planar_float_avx2_permutex_vstripe_ks4;       
       }
       return resizer_h_avx2_generic_float_pix16_sub4_ks_4_8_16; // new generic, like avx512 version
       // return resizer_h_avx2_generic_float; old generic would be named pix8_sub2_ks8

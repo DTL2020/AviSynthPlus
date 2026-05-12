@@ -1575,7 +1575,6 @@ static __m256 _mm256_load_partial_safe(const float* src_ptr, int floats_to_load)
     return _mm256_setzero_ps(); // n/a cannot happen
 }
 
-
 // resize_h_planar_float_avx2_xxx_vstripe_ks4 method #2: permutex-based
 void resize_h_planar_float_avx2_permutex_vstripe_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
 {
@@ -1696,13 +1695,169 @@ void resize_h_planar_float_avx2_permutex_vstripe_ks4(BYTE* dst8, const BYTE* src
         result1 = _mm256_fmadd_ps(data_3, coef_3, result1);
 
         // this must be stream until partial tile interface done
-        _mm256_stream_ps(dst_ptr, _mm256_add_ps(result0, result1));
+        //_mm256_stream_ps(dst_ptr, _mm256_add_ps(result0, result1));
+        _mm256_store_ps(dst_ptr, _mm256_add_ps(result0, result1)); // for single threading
 
         dst_ptr += dst_pitch;
         src_ptr += src_pitch;
       }
       current_coeff += filter_size * 8;
       }; // end of lambda
+
+    // Process the 'safe zone' where direct full unaligned loads are acceptable.
+    for (; x < width_safe_mod; x += PIXELS_AT_A_TIME)
+    {
+      do_h_float_core(std::false_type{}); // partial_load == false, use direct _mm_loadu_ps
+    }
+
+    // Process the potentially 'unsafe zone' near the image edge, using safe loading.
+    for (; x < width; x += PIXELS_AT_A_TIME)
+    {
+      do_h_float_core(std::true_type{}); // partial_load == true, use the safer '_mm256_load_partial_safe'
+    }
+  }
+}
+
+// resize_h_planar_float_avx2_xxx_vstripe_ks4 method #2: permutex-based
+// meander V-scan and half scanlines in V-stripe and prefetches
+void resize_h_planar_float_avx2_permutex_vstripe_m_ks4(BYTE* dst8, const BYTE* src8, int dst_pitch, int src_pitch, ResamplingProgram* program, int width, int height, int bits_per_pixel)
+{
+  const int filter_size = program->filter_size; // aligned, practically the coeff table stride
+
+  src_pitch /= sizeof(float);
+  dst_pitch /= sizeof(float);
+
+  float* src = (float*)src8;
+  float* dst = (float*)dst8;
+
+  constexpr int PIXELS_AT_A_TIME = 8; // Process eight pixels in parallel in AVX2
+
+  // Pre-checked for permutex-based upsampling: the source pixels will surely fit within single 8 float loads
+  // The right edge handling will be done via safe partial loads when needed, loading 8 pixels at once
+  // may not be safe there.
+
+  // 'source_overread_beyond_targetx' marks the x position in the target (output) scanline where,
+  // if we process N pixels at a time (e.g., 8 for AVX2), the filter kernel may overread the source
+  // buffer near the right edge due to kernel size and pixel offsets. Beyond this value, it is no
+  // longer safe to read N source pixels at once from pixel_offset[].
+
+  // For x positions < source_overread_beyond_targetx, it is safe to load N source pixels at once.
+  // For x positions >= source_overread_beyond_targetx, we must use a safer loading method (e.g.,
+  // partial loads with padding) to avoid out-of-bounds memory access.
+
+  // permutex is even more special: the safety analysis is performed only for the beginning of each
+  // block of 8 pixels processed at a time, so only the source loads for the offset position of
+  // every 8th target pixel are considered. This is 'safelimit_8_pixels_each8th_target'.
+  // The program's safe limits are pre-calculated during program setup.
+
+  const int width_safe_mod = (program->safelimit_8_pixels_each8th_target.overread_possible ? program->safelimit_8_pixels_each8th_target.source_overread_beyond_targetx : width) / PIXELS_AT_A_TIME * PIXELS_AT_A_TIME;
+
+  // Preconditions:
+  assert(program->filter_size_real <= 4); // We preload all relevant coefficients (up to 4) before the height loop.
+
+  // 'target_size_alignment' ensures we can safely access coefficients using offsets like
+  // coeff + filter_size*0 to filter_size*7 when processing 8 H pixels at a time
+  assert(program->target_size_alignment >= 8);
+
+  // Ensure that coefficient loading is safe for 4 float loads,
+  // if less than 4, padded with zeros till filter_size_alignment.
+  assert(program->filter_size_alignment >= 4);
+
+  const int max_scanlines = program->max_scanlines / 2;
+  int iVStripe = 0;// V-stripe counter for meander scan
+
+  for (int y_from = 0; y_from < height; y_from += max_scanlines) {
+    int y_to = std::min(y_from + max_scanlines, height);
+    // Reset current_coeff for the start of the stripe
+    const float* AVS_RESTRICT current_coeff = program->pixel_coefficient_float; // +iYstart * filter_size;
+
+    int x = 0;
+
+    // This 'auto' lambda construct replaces the need of templates
+    auto do_h_float_core = [&](auto partial_load) {
+      // Assumes 'filter_size_alignment' <= 4, 'target_size_alignment' >= 8
+      // Prepare 4 coefs per pixel for 8 pixels in transposed V-form at once before the height loop.
+      __m256 coef_0 = _mm256_load_2_m128(current_coeff + filter_size * 0, current_coeff + filter_size * 4);
+      __m256 coef_1 = _mm256_load_2_m128(current_coeff + filter_size * 1, current_coeff + filter_size * 5);
+      __m256 coef_2 = _mm256_load_2_m128(current_coeff + filter_size * 2, current_coeff + filter_size * 6);
+      __m256 coef_3 = _mm256_load_2_m128(current_coeff + filter_size * 3, current_coeff + filter_size * 7);
+
+      _MM_TRANSPOSE8_LANE4_PS(coef_0, coef_1, coef_2, coef_3);
+
+      // convert resampling program in H-form into permuting indexes for src transposition in V-form
+      __m256i perm_0 = _mm256_loadu_si256((__m256i*)(&program->pixel_offset[x]));
+      int iStart = program->pixel_offset[x];
+      perm_0 = _mm256_sub_epi32(perm_0, _mm256_set1_epi32(iStart));
+      /* like this:
+      __m256i perm_0 = _mm512_set_epi32(
+        program->pixel_offset[x + 7] - iStart,
+        ...
+        program->pixel_offset[x + 0] - iStart);
+      */
+
+      __m256i one_epi32 = _mm256_set1_epi32(1);
+      __m256i perm_1 = _mm256_add_epi32(perm_0, one_epi32); // begin8_rel+1, begin7_rel+1, ... begin2_rel+1, begin1_rel+1
+      __m256i perm_2 = _mm256_add_epi32(perm_1, one_epi32); // begin8_rel+2, begin7_rel+2, ... begin2_rel+2, begin1_rel+2
+      __m256i perm_3 = _mm256_add_epi32(perm_2, one_epi32); // begin8_rel+3, begin7_rel+3, ... begin2_rel+3, begin1_rel+3
+      // These indexes are guaranteed to be 0..7 due to the earlier analysis,
+      // and can be used for the indexing parameter in _mm256_permutevar8x32_ps
+
+      // meander (alternate) scan of vertical stripes (even stripe top to bottom, odd stripe bottom to top)
+      int iVScanDir = (iVStripe % 2 == 0) ? 1 : -1; // to use as multiplier at main loop without conditional adds or subtracts
+      int iRowStart = (iVStripe % 2 == 0) ? y_from : y_to - 1;
+      // increment iVstripe counter
+      iVStripe++;
+
+      // Start pointers depend on meander direction
+      float* AVS_RESTRICT dst_ptr = dst + x + iRowStart * dst_pitch;
+      const float* src_ptr = src + iStart + iRowStart * src_pitch;
+
+      // for partial_load only
+      const int remaining = program->source_size - iStart;
+      const int floats_to_load = remaining >= 8 ? 8 : remaining;
+
+      for (int y = y_from; y < y_to; ++y) { // only processed rows counter - do not depend on meander direction and not used for pointer calculations
+        // process scanline y
+        __m256 data_src;
+        // We'll need exactly 8 floats starting from src+iStart
+        if constexpr (partial_load) {
+          // In the potentially unsafe zone (near the right edge of the image), we use a safe loading function
+          // to prevent reading beyond the allocated source scanline. This handles cases where loading 8 floats
+          // starting from 'src_ptr + beginX' might exceed the source buffer.
+          data_src = _mm256_load_partial_safe(src_ptr, floats_to_load);
+        }
+        else {
+          data_src = _mm256_loadu_ps(src_ptr); // load 8 source pixels, can contain garbage beyond the right edge in the last loop
+        }
+
+        // After we load 8 source pixels starting from begin1, we can be sure, that pixel_offset[x+0] .. pixel_offset[x+7] + 3 is
+        // within valid source range. Pre-check chooses permutex method only if all needed pixels fit within these 8 loaded pixels.
+
+        // perm_0 .. perm_3 contain the indexes to permute data_src into the correct order
+        // for each of the 8 output pixels so they index into 0..7 (guaranteed) range of the source data loaded above
+        __m256 data_0 = _mm256_permutevar8x32_ps(data_src, perm_0);
+        __m256 data_1 = _mm256_permutevar8x32_ps(data_src, perm_1);
+        __m256 data_2 = _mm256_permutevar8x32_ps(data_src, perm_2);
+        __m256 data_3 = _mm256_permutevar8x32_ps(data_src, perm_3);
+
+        __m256 result0 = _mm256_mul_ps(data_0, coef_0);
+        __m256 result1 = _mm256_mul_ps(data_2, coef_2);
+
+        result0 = _mm256_fmadd_ps(data_1, coef_1, result0);
+        result1 = _mm256_fmadd_ps(data_3, coef_3, result1);
+
+        // this must be stream until partial tile interface done
+        _mm256_stream_ps(dst_ptr, _mm256_add_ps(result0, result1)); // better for MT
+//        _mm256_store_ps(dst_ptr, _mm256_add_ps(result0, result1)); - best for single threading
+
+        dst_ptr += dst_pitch * iVScanDir;
+        src_ptr += src_pitch * iVScanDir;
+
+        //_mm_prefetch(const_cast<char*>((char*)(const_cast<float*>(src_ptr)) + PIXELS_AT_A_TIME * sizeof(float)), _MM_HINT_T0); // prefetch source next V-stripe for read - looks like a few performance addition
+        _m_prefetchw(reinterpret_cast<uint8_t*>(dst_ptr) + PIXELS_AT_A_TIME * sizeof(float)); // prefetch next V-stripe for write
+      }
+      current_coeff += filter_size * 8;
+    }; // end of lambda
 
     // Process the 'safe zone' where direct full unaligned loads are acceptable.
     for (; x < width_safe_mod; x += PIXELS_AT_A_TIME)
